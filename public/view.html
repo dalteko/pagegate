@@ -33,7 +33,7 @@
   </div>
 
   <!-- Sandboxed iframe for rendering unlocked content (no same-origin access) -->
-  <iframe id="contentFrame" class="content-frame hidden" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer"></iframe>
+  <iframe id="contentFrame" class="content-frame hidden" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer" style="position:fixed;top:0;left:0;width:100%;height:100%;border:none;background:white;z-index:9999"></iframe>
 
   <script>
     (() => {
