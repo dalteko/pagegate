@@ -464,6 +464,91 @@ section {
   opacity: 1;
 }
 
+/* === History === */
+.history-section {
+  margin-top: 8px;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  transition: border-color 0.2s ease;
+}
+
+.history-item:hover {
+  border-color: var(--border-hover);
+}
+
+.history-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-item-name {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item-meta {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.history-item-meta .expired {
+  color: var(--error);
+}
+
+.history-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.btn-icon {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-icon:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-icon.copied {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.btn-icon--delete:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
 /* === Mobile === */
 @media (max-width: 480px) {
   .container {
@@ -493,5 +578,19 @@ section {
 
   .btn-copy {
     width: 100%;
+  }
+
+  .history-item {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .history-item-actions {
+    width: 100%;
+  }
+
+  .btn-icon {
+    flex: 1;
+    text-align: center;
   }
 }
