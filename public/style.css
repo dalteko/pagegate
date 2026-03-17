@@ -560,6 +560,122 @@ section {
   color: var(--error);
 }
 
+/* === Feedback === */
+.feedback-section {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.feedback-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.feedback-input-row input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+  min-width: 0;
+}
+
+.feedback-input-row input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.feedback-error {
+  color: var(--error);
+  font-size: 0.8125rem;
+  margin-top: 6px;
+}
+
+.feedback-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+.feedback-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.feedback-vote-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+  color: var(--text-secondary);
+  font-family: inherit;
+  line-height: 1;
+}
+
+.feedback-vote-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.feedback-vote-btn.voted {
+  border-color: var(--accent);
+  color: var(--accent);
+  cursor: default;
+}
+
+.vote-arrow {
+  font-size: 0.625rem;
+}
+
+.vote-count {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.feedback-text {
+  flex: 1;
+  font-size: 0.875rem;
+  color: var(--text);
+  min-width: 0;
+}
+
+.feedback-status {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.feedback-status--planned {
+  background: rgba(108, 92, 231, 0.1);
+  color: var(--accent);
+}
+
+.feedback-status--done {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+}
+
 /* === Mobile === */
 @media (max-width: 480px) {
   .container {
@@ -603,5 +719,13 @@ section {
   .btn-icon {
     flex: 1;
     text-align: center;
+  }
+
+  .feedback-input-row {
+    flex-direction: column;
+  }
+
+  .feedback-input-row .btn-copy {
+    width: 100%;
   }
 }

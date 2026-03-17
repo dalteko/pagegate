@@ -102,6 +102,64 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
   }
 });
 
+// === Feedback API ===
+
+// Rate limiter for feedback submissions
+const feedbackLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.ip,
+  message: { error: 'Too many submissions. Try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+function hashIp(ip) {
+  return crypto.createHash('sha256').update(ip + 'pagegate-salt').digest('hex').slice(0, 16);
+}
+
+// GET /api/feedback — list all feedback
+app.get('/api/feedback', (req, res) => {
+  const items = db.listFeedback();
+  const ipHash = hashIp(req.ip);
+  const voted = db.listVotedByIp(ipHash);
+  res.json(items.map(item => ({
+    id: item.id,
+    text: item.text,
+    votes: item.votes,
+    status: item.status,
+    createdAt: item.created_at,
+    voted: voted.includes(item.id),
+  })));
+});
+
+// POST /api/feedback — submit feedback
+app.post('/api/feedback', feedbackLimiter, (req, res) => {
+  const { text } = req.body;
+  if (!text || !text.trim() || text.trim().length < 3) {
+    return res.status(400).json({ error: 'Feedback is too short' });
+  }
+  if (text.trim().length > 280) {
+    return res.status(400).json({ error: 'Feedback is too long (max 280 characters)' });
+  }
+  const id = crypto.randomBytes(6).toString('base64url').slice(0, 8);
+  db.insertFeedback(id, text.trim());
+  // Auto-vote for your own submission
+  const ipHash = hashIp(req.ip);
+  db.voteFeedback(id, ipHash);
+  res.status(201).json({ id });
+});
+
+// POST /api/feedback/:id/vote — upvote
+app.post('/api/feedback/:id/vote', (req, res) => {
+  const item = db.getFeedback(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  const ipHash = hashIp(req.ip);
+  const success = db.voteFeedback(req.params.id, ipHash);
+  if (!success) return res.status(409).json({ error: 'Already voted' });
+  res.json({ votes: item.votes + 1 });
+});
+
 // GET /:pageId — serve view.html for password prompt
 app.get('/:pageId', (req, res) => {
   const { pageId } = req.params;
