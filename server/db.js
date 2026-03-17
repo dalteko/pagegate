@@ -15,9 +15,17 @@ db.exec(`
     original_filename TEXT,
     file_size INTEGER,
     created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL
+    expires_at TEXT NOT NULL,
+    encryption_salt TEXT
   )
 `);
+
+// Migration: add encryption_salt column if it doesn't exist (for existing DBs)
+try {
+  db.exec(`ALTER TABLE pages ADD COLUMN encryption_salt TEXT`);
+} catch (e) {
+  // Column already exists — ignore
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS feedback (
@@ -40,8 +48,8 @@ db.exec(`
 
 
 const insertStmt = db.prepare(`
-  INSERT INTO pages (id, password_hash, original_filename, file_size, created_at, expires_at)
-  VALUES (@id, @password_hash, @original_filename, @file_size, @created_at, @expires_at)
+  INSERT INTO pages (id, password_hash, original_filename, file_size, created_at, expires_at, encryption_salt)
+  VALUES (@id, @password_hash, @original_filename, @file_size, @created_at, @expires_at, @encryption_salt)
 `);
 
 const getStmt = db.prepare(`

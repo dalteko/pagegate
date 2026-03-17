@@ -54,7 +54,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    storage.savePage(pageId, file.buffer);
+    const encryptionSalt = storage.savePageEncrypted(pageId, file.buffer, password.trim());
     db.insertPage({
       id: pageId,
       password_hash: passwordHash,
@@ -62,6 +62,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       file_size: file.size,
       created_at: now.toISOString(),
       expires_at: expiresAt.toISOString(),
+      encryption_salt: encryptionSalt,
     });
 
     const url = BASE_URL
@@ -88,7 +89,10 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
     const match = await bcrypt.compare(password, page.password_hash);
     if (!match) return res.status(401).json({ error: 'Wrong password' });
 
-    const html = storage.readPage(pageId);
+    // Decrypt if encrypted, otherwise fall back to legacy plaintext
+    const html = page.encryption_salt
+      ? storage.readPageEncrypted(pageId, password, page.encryption_salt)
+      : storage.readPagePlaintext(pageId);
     if (!html) return res.status(404).json({ error: 'Page file not found' });
 
     res.json({ html });
