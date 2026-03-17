@@ -142,11 +142,10 @@
       resultSection.classList.remove('hidden');
       passwordSection.classList.add('hidden');
 
-      // Save to history
+      // Save to history (no password stored — users should use a password manager)
       saveToHistory({
         url: data.url,
         filename: currentFile.name,
-        password: passwordInput.value.trim(),
         createdAt: new Date().toISOString(),
         expiresAt: data.expiresAt,
       });
@@ -207,7 +206,17 @@
   // === History (localStorage) ===
   function getHistory() {
     try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+      const history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+      // Migrate: strip any plaintext passwords from older entries
+      let migrated = false;
+      for (const entry of history) {
+        if (entry.password) {
+          delete entry.password;
+          migrated = true;
+        }
+      }
+      if (migrated) localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      return history;
     } catch {
       return [];
     }
@@ -270,7 +279,6 @@
         </div>
         <div class="history-item-actions">
           <button class="btn-icon btn-icon--copy" data-url="${escapeAttr(entry.url)}" title="Copy link">Copy</button>
-          ${entry.password ? `<button class="btn-icon btn-icon--pw" data-pw="${escapeAttr(entry.password)}" title="Copy password">PW</button>` : ''}
           <button class="btn-icon btn-icon--open" data-url="${escapeAttr(entry.url)}" title="Open page">Open</button>
           <button class="btn-icon btn-icon--delete" data-url="${escapeAttr(entry.url)}" title="Remove">&times;</button>
         </div>
@@ -291,13 +299,6 @@
         btn.textContent = 'Copied!';
         btn.classList.add('copied');
         setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
-      } catch { /* ignore */ }
-    } else if (btn.classList.contains('btn-icon--pw')) {
-      try {
-        await navigator.clipboard.writeText(btn.dataset.pw);
-        btn.textContent = 'Copied!';
-        btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = 'PW'; btn.classList.remove('copied'); }, 1500);
       } catch { /* ignore */ }
     } else if (btn.classList.contains('btn-icon--open')) {
       window.open(btn.dataset.url, '_blank');

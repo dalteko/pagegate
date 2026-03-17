@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
-const { nanoid } = require('nanoid');
+const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const db = require('./db');
@@ -49,7 +49,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'Only .html files are accepted' });
     }
 
-    const pageId = nanoid(8);
+    const pageId = crypto.randomBytes(6).toString('base64url').slice(0, 8);
     const passwordHash = await bcrypt.hash(password.trim(), 10);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -109,9 +109,19 @@ app.get('/:pageId', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'view.html'));
 });
 
-// Lazy cleanup on startup + every 24h
-db.deleteExpired();
-setInterval(() => db.deleteExpired(), 24 * 60 * 60 * 1000);
+// Cleanup: delete expired pages from disk + DB on startup and every 24h
+function cleanupExpired() {
+  const expiredIds = db.getExpiredIds();
+  for (const id of expiredIds) {
+    storage.deletePage(id);
+  }
+  db.deleteExpired();
+  if (expiredIds.length > 0) {
+    console.log(`Cleaned up ${expiredIds.length} expired page(s)`);
+  }
+}
+cleanupExpired();
+setInterval(cleanupExpired, 24 * 60 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log(`PageGate running at http://localhost:${PORT}`);

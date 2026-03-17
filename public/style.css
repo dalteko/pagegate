@@ -464,6 +464,17 @@ section {
   opacity: 1;
 }
 
+/* === Unlocked Content Frame === */
+.content-frame {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: white;
+}
+
 /* === History === */
 .history-section {
   margin-top: 8px;

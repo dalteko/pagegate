@@ -8,7 +8,7 @@
   <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.js"></script>
 </head>
 <body>
-  <div class="view-container">
+  <div class="view-container" id="viewContainer">
     <div class="view-card" id="promptCard">
       <a href="/" class="view-logo">PageGate</a>
       <form id="passwordForm">
@@ -32,6 +32,9 @@
     </footer>
   </div>
 
+  <!-- Sandboxed iframe for rendering unlocked content (no same-origin access) -->
+  <iframe id="contentFrame" class="content-frame hidden" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer"></iframe>
+
   <script>
     (() => {
       const pageId = window.location.pathname.slice(1);
@@ -41,6 +44,8 @@
       const unlockBtn = document.getElementById('unlockBtn');
       const promptCard = document.getElementById('promptCard');
       const expiredCard = document.getElementById('expiredCard');
+      const viewContainer = document.getElementById('viewContainer');
+      const contentFrame = document.getElementById('contentFrame');
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -64,9 +69,12 @@
 
           if (res.ok) {
             const data = await res.json();
-            document.open();
-            document.write(data.html);
-            document.close();
+            // Render in sandboxed iframe — no allow-same-origin, so the
+            // uploaded content cannot access PageGate's origin, localStorage,
+            // cookies, or API endpoints.
+            viewContainer.classList.add('hidden');
+            contentFrame.classList.remove('hidden');
+            contentFrame.srcdoc = data.html;
           } else if (res.status === 401) {
             errorMsg.textContent = 'Wrong password';
             errorMsg.classList.remove('hidden');
