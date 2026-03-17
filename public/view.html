@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PageGate — Enter password</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="view-container">
+    <div class="view-card" id="promptCard">
+      <a href="/" class="view-logo">PageGate</a>
+      <form id="passwordForm">
+        <div class="input-group">
+          <input type="password" id="passwordInput" placeholder="Enter password" autocomplete="off" autofocus>
+        </div>
+        <button type="submit" class="btn-primary" id="unlockBtn">Unlock</button>
+      </form>
+      <p class="view-error hidden" id="errorMsg"></p>
+    </div>
+
+    <div class="view-card hidden" id="expiredCard">
+      <a href="/" class="view-logo">PageGate</a>
+      <p class="view-expired">This page is no longer available.</p>
+      <a href="/" class="btn-secondary" style="display:block;text-align:center;text-decoration:none;margin-top:16px;">Go to PageGate</a>
+    </div>
+
+    <footer class="view-footer">
+      <span>Hosted on <a href="/">PageGate</a></span>
+      <a href="mailto:abuse@pagegate.io" class="report-link">Report this page</a>
+    </footer>
+  </div>
+
+  <script>
+    (() => {
+      const pageId = window.location.pathname.slice(1);
+      const form = document.getElementById('passwordForm');
+      const input = document.getElementById('passwordInput');
+      const errorMsg = document.getElementById('errorMsg');
+      const unlockBtn = document.getElementById('unlockBtn');
+      const promptCard = document.getElementById('promptCard');
+      const expiredCard = document.getElementById('expiredCard');
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const password = input.value.trim();
+        if (!password) {
+          input.style.borderColor = '#EF4444';
+          input.focus();
+          return;
+        }
+
+        unlockBtn.disabled = true;
+        unlockBtn.textContent = 'Unlocking...';
+        errorMsg.classList.add('hidden');
+
+        try {
+          const res = await fetch(`/api/verify/${pageId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            document.open();
+            document.write(data.html);
+            document.close();
+          } else if (res.status === 401) {
+            errorMsg.textContent = 'Wrong password';
+            errorMsg.classList.remove('hidden');
+            input.style.borderColor = '#EF4444';
+            input.focus();
+            input.select();
+          } else if (res.status === 404) {
+            promptCard.classList.add('hidden');
+            expiredCard.classList.remove('hidden');
+          } else if (res.status === 429) {
+            errorMsg.textContent = 'Too many attempts. Try again later.';
+            errorMsg.classList.remove('hidden');
+          } else {
+            errorMsg.textContent = 'Something went wrong. Please try again.';
+            errorMsg.classList.remove('hidden');
+          }
+        } catch {
+          errorMsg.textContent = 'Connection error. Please try again.';
+          errorMsg.classList.remove('hidden');
+        } finally {
+          unlockBtn.disabled = false;
+          unlockBtn.textContent = 'Unlock';
+        }
+      });
+
+      input.addEventListener('input', () => {
+        input.style.borderColor = '';
+        errorMsg.classList.add('hidden');
+      });
+    })();
+  </script>
+</body>
+</html>
