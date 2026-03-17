@@ -569,14 +569,22 @@ section {
 
 .feedback-input-row {
   display: flex;
-  gap: 8px;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.feedback-input-row:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
 }
 
 .feedback-input-row input {
   flex: 1;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  border: none;
   font-size: 0.875rem;
   font-family: inherit;
   color: var(--text);
@@ -585,9 +593,10 @@ section {
   min-width: 0;
 }
 
-.feedback-input-row input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-bg);
+.feedback-input-row .btn-copy {
+  border-radius: 0;
+  padding: 12px 20px;
+  flex-shrink: 0;
 }
 
 .feedback-error {
@@ -721,11 +730,7 @@ section {
     text-align: center;
   }
 
-  .feedback-input-row {
-    flex-direction: column;
-  }
-
   .feedback-input-row .btn-copy {
-    width: 100%;
+    padding: 12px 16px;
   }
 }
