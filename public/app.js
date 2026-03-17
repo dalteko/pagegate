@@ -142,6 +142,9 @@
       resultSection.classList.remove('hidden');
       passwordSection.classList.add('hidden');
 
+      // Track upload in Plausible
+      if (window.plausible) plausible('Upload', { props: { filename: currentFile.name, size: currentFile.size } });
+
       // Save to history (no password stored — users should use a password manager)
       saveToHistory({
         url: data.url,

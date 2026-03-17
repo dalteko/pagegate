@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PageGate — Enter password</title>
   <link rel="stylesheet" href="/style.css">
-  <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.js"></script>
+  <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.tagged-events.js"></script>
 </head>
 <body>
   <div class="view-container" id="viewContainer">
@@ -75,18 +75,22 @@
             viewContainer.classList.add('hidden');
             contentFrame.classList.remove('hidden');
             contentFrame.srcdoc = data.html;
+            if (window.plausible) plausible('Unlock', { props: { page: pageId } });
           } else if (res.status === 401) {
             errorMsg.textContent = 'Wrong password';
             errorMsg.classList.remove('hidden');
             input.style.borderColor = '#EF4444';
             input.focus();
             input.select();
+            if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'wrong_password' } });
           } else if (res.status === 404) {
             promptCard.classList.add('hidden');
             expiredCard.classList.remove('hidden');
+            if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'expired' } });
           } else if (res.status === 429) {
             errorMsg.textContent = 'Too many attempts. Try again later.';
             errorMsg.classList.remove('hidden');
+            if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'rate_limited' } });
           } else {
             errorMsg.textContent = 'Something went wrong. Please try again.';
             errorMsg.classList.remove('hidden');
