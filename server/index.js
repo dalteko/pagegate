@@ -9,6 +9,10 @@ const storage = require('./storage');
 
 const app = express();
 const PORT = process.env.PORT || 3457;
+const BASE_URL = process.env.BASE_URL || '';
+
+// Trust proxy (Railway/Cloudflare)
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(express.json());
@@ -60,7 +64,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       expires_at: expiresAt.toISOString(),
     });
 
-    const url = `${req.protocol}://${req.get('host')}/${pageId}`;
+    const url = BASE_URL
+      ? `${BASE_URL}/${pageId}`
+      : `${req.protocol}://${req.get('host')}/${pageId}`;
     res.status(201).json({ pageId, url, expiresAt: expiresAt.toISOString() });
   } catch (err) {
     console.error('Upload error:', err);
