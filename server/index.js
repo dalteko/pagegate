@@ -118,22 +118,7 @@ function hashIp(ip) {
   return crypto.createHash('sha256').update(ip + 'pagegate-salt').digest('hex').slice(0, 16);
 }
 
-// GET /api/feedback — list all feedback
-app.get('/api/feedback', (req, res) => {
-  const items = db.listFeedback();
-  const ipHash = hashIp(req.ip);
-  const voted = db.listVotedByIp(ipHash);
-  res.json(items.map(item => ({
-    id: item.id,
-    text: item.text,
-    votes: item.votes,
-    status: item.status,
-    createdAt: item.created_at,
-    voted: voted.includes(item.id),
-  })));
-});
-
-// POST /api/feedback — submit feedback
+// POST /api/feedback — submit feedback (public)
 app.post('/api/feedback', feedbackLimiter, (req, res) => {
   const { text } = req.body;
   if (!text || !text.trim() || text.trim().length < 3) {
@@ -150,14 +135,20 @@ app.post('/api/feedback', feedbackLimiter, (req, res) => {
   res.status(201).json({ id });
 });
 
-// POST /api/feedback/:id/vote — upvote
-app.post('/api/feedback/:id/vote', (req, res) => {
-  const item = db.getFeedback(req.params.id);
-  if (!item) return res.status(404).json({ error: 'Not found' });
-  const ipHash = hashIp(req.ip);
-  const success = db.voteFeedback(req.params.id, ipHash);
-  if (!success) return res.status(409).json({ error: 'Already voted' });
-  res.json({ votes: item.votes + 1 });
+// GET /admin/feedback — admin-only view of all feedback (sorted by votes desc)
+app.get('/admin/feedback', (req, res) => {
+  const adminKey = process.env.ADMIN_KEY;
+  if (!adminKey || req.query.key !== adminKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const items = db.listFeedback();
+  res.json(items.map(item => ({
+    id: item.id,
+    text: item.text,
+    votes: item.votes,
+    status: item.status,
+    createdAt: item.created_at,
+  })));
 });
 
 // GET /:pageId — serve view.html for password prompt

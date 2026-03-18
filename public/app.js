@@ -325,39 +325,10 @@
   // Render on load
   renderHistory();
 
-  // === Feedback ===
+  // === Feedback (submit only — list is private) ===
   const feedbackInput = document.getElementById('feedbackInput');
   const feedbackSubmitBtn = document.getElementById('feedbackSubmitBtn');
   const feedbackError = document.getElementById('feedbackError');
-  const feedbackList = document.getElementById('feedbackList');
-
-  async function loadFeedback() {
-    try {
-      const res = await fetch('/api/feedback');
-      if (!res.ok) return;
-      const items = await res.json();
-      renderFeedback(items);
-    } catch { /* ignore */ }
-  }
-
-  function renderFeedback(items) {
-    feedbackList.innerHTML = '';
-    if (items.length === 0) return;
-
-    items.forEach(item => {
-      const row = document.createElement('div');
-      row.className = 'feedback-item';
-      row.innerHTML = `
-        <button class="feedback-vote-btn ${item.voted ? 'voted' : ''}" data-id="${escapeAttr(item.id)}" ${item.voted ? 'disabled' : ''}>
-          <span class="vote-arrow">\u25B2</span>
-          <span class="vote-count">${item.votes}</span>
-        </button>
-        <span class="feedback-text">${escapeHtml(item.text)}</span>
-        ${item.status !== 'open' ? `<span class="feedback-status feedback-status--${escapeAttr(item.status)}">${escapeHtml(item.status)}</span>` : ''}
-      `;
-      feedbackList.appendChild(row);
-    });
-  }
 
   feedbackSubmitBtn.addEventListener('click', async () => {
     const text = feedbackInput.value.trim();
@@ -376,7 +347,8 @@
       });
       if (res.ok) {
         feedbackInput.value = '';
-        loadFeedback();
+        feedbackSubmitBtn.textContent = 'Sent!';
+        setTimeout(() => { feedbackSubmitBtn.textContent = 'Submit'; }, 2000);
       } else {
         const data = await res.json();
         feedbackError.textContent = data.error || 'Failed to submit';
@@ -393,21 +365,5 @@
   feedbackInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') feedbackSubmitBtn.click();
   });
-
-  feedbackList.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.feedback-vote-btn');
-    if (!btn || btn.disabled) return;
-    btn.disabled = true;
-    try {
-      const res = await fetch(`/api/feedback/${btn.dataset.id}/vote`, { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        btn.classList.add('voted');
-        btn.querySelector('.vote-count').textContent = data.votes;
-      }
-    } catch { /* ignore */ }
-  });
-
-  loadFeedback();
 
 })();

@@ -5,7 +5,8 @@
       "name": "pagegate-dev",
       "runtimeExecutable": "node",
       "runtimeArgs": ["server/index.js"],
-      "port": 3457
+      "port": 3457,
+      "autoPort": false
     }
   ]
 }
