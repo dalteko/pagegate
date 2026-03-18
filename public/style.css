@@ -177,6 +177,13 @@ body {
   min-height: 1.25em;
 }
 
+.upload-tagline {
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  margin-top: 12px;
+}
+
 /* === Sections (shared) === */
 .hidden {
   display: none !important;
@@ -717,6 +724,70 @@ section {
 .feedback-status--done {
   background: rgba(16, 185, 129, 0.1);
   color: var(--success);
+}
+
+/* === Privacy Dropdown === */
+.privacy-dropdown {
+  margin-top: 24px;
+  padding-top: 20px;
+}
+
+.privacy-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition: color 0.2s ease;
+}
+
+.privacy-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.privacy-toggle:hover {
+  color: var(--text);
+}
+
+.privacy-chevron {
+  transition: transform 0.2s ease;
+}
+
+.privacy-dropdown[open] .privacy-chevron {
+  transform: rotate(180deg);
+}
+
+.privacy-list {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.privacy-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.privacy-list li svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.privacy-list li strong {
+  color: var(--text);
 }
 
 /* === Mobile === */
