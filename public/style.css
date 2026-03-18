@@ -564,6 +564,7 @@ section {
 .feedback-section {
   margin-top: 32px;
   padding-top: 24px;
+  padding-bottom: 24px;
   border-top: 1px solid var(--border);
 }
 
@@ -701,7 +702,11 @@ section {
   }
 
   .dropzone {
-    padding: 36px 16px;
+    padding: 28px 16px;
+  }
+
+  .header {
+    margin-bottom: 24px;
   }
 
   .preview-frame {
@@ -730,7 +735,33 @@ section {
     text-align: center;
   }
 
+  .feedback-input-row {
+    flex-direction: column;
+    border: none;
+    gap: 8px;
+    overflow: visible;
+  }
+
+  .feedback-input-row:focus-within {
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  .feedback-input-row input {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    font-size: 1rem;
+  }
+
+  .feedback-input-row input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+
   .feedback-input-row .btn-copy {
-    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    width: 100%;
   }
 }
