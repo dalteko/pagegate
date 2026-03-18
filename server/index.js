@@ -178,5 +178,4 @@ setInterval(cleanupExpired, 24 * 60 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log(`PageGate running at http://localhost:${PORT}`);
-  console.log(`ADMIN_KEY set: ${!!process.env.ADMIN_KEY}`);
 });
