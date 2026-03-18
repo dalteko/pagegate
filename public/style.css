@@ -390,6 +390,39 @@ section {
   color: var(--text-secondary);
 }
 
+.footer-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 12px;
+  padding-bottom: 8px;
+}
+
+.footer-label {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.footer-link:hover {
+  color: var(--text);
+}
+
+.footer-link svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* === View Page (password prompt) === */
 .view-container {
   max-width: 400px;
