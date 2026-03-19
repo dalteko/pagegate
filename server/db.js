@@ -16,7 +16,9 @@ db.exec(`
     file_size INTEGER,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    encryption_salt TEXT
+    encryption_salt TEXT,
+    user_id TEXT,
+    slug TEXT UNIQUE
   )
 `);
 
@@ -68,10 +70,11 @@ try {
 
 // Migration: add slug column to pages
 try {
-  db.exec(`ALTER TABLE pages ADD COLUMN slug TEXT UNIQUE`);
+  db.exec(`ALTER TABLE pages ADD COLUMN slug TEXT`);
 } catch (e) {
   // Column already exists — ignore
 }
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug) WHERE slug IS NOT NULL`);
 
 
 const insertStmt = db.prepare(`
