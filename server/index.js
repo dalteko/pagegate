@@ -4,6 +4,8 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const { clerkMiddleware, getAuth } = require('@clerk/express');
+const Stripe = require('stripe');
 const db = require('./db');
 const storage = require('./storage');
 
@@ -11,12 +13,93 @@ const app = express();
 const PORT = process.env.PORT || 3457;
 const BASE_URL = process.env.BASE_URL || '';
 
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+
 // Trust proxy (Railway/Cloudflare)
 app.set('trust proxy', 1);
+
+// Stripe webhook needs raw body — must be before express.json()
+app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) {
+    return res.status(500).json({ error: 'Stripe not configured' });
+  }
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('Stripe webhook signature verification failed:', err.message);
+    return res.status(400).json({ error: 'Invalid signature' });
+  }
+
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      const session = event.data.object;
+      const clerkId = session.metadata?.clerk_id;
+      if (clerkId) {
+        db.updateUserPro(clerkId, {
+          isPro: true,
+          stripeCustomerId: session.customer,
+          stripeSubscriptionId: session.subscription,
+          proExpiresAt: null,
+        });
+        console.log(`User ${clerkId} upgraded to Pro`);
+      }
+      break;
+    }
+    case 'customer.subscription.deleted': {
+      const sub = event.data.object;
+      const user = db.getUserByStripeCustomer(sub.customer);
+      if (user) {
+        // Grace period: 30 days from cancellation
+        const grace = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        db.updateUserPro(user.clerk_id, {
+          isPro: false,
+          stripeCustomerId: user.stripe_customer_id,
+          stripeSubscriptionId: null,
+          proExpiresAt: grace,
+        });
+        console.log(`User ${user.clerk_id} subscription cancelled, grace until ${grace}`);
+      }
+      break;
+    }
+    case 'customer.subscription.updated': {
+      const sub = event.data.object;
+      const user = db.getUserByStripeCustomer(sub.customer);
+      if (user) {
+        const isActive = sub.status === 'active' || sub.status === 'trialing';
+        db.updateUserPro(user.clerk_id, {
+          isPro: isActive,
+          stripeCustomerId: user.stripe_customer_id,
+          stripeSubscriptionId: sub.id,
+          proExpiresAt: isActive ? null : user.pro_expires_at,
+        });
+      }
+      break;
+    }
+  }
+
+  res.json({ received: true });
+});
 
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Clerk auth middleware — populates req.auth for all routes
+if (process.env.CLERK_SECRET_KEY) {
+  app.use(clerkMiddleware());
+}
+
+// Helper: safely get userId from Clerk auth (returns null if not configured)
+function getAuthUserId(req) {
+  try {
+    const { userId } = getAuth(req);
+    return userId || null;
+  } catch {
+    return null;
+  }
+}
 
 // Multer: memory storage, 5MB limit
 const upload = multer({
@@ -64,6 +147,12 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       expires_at: expiresAt.toISOString(),
       encryption_salt: encryptionSalt,
     });
+
+    // Link page to authenticated user if signed in
+    const userId = getAuthUserId(req);
+    if (userId) {
+      db.setPageOwner(pageId, userId);
+    }
 
     const url = BASE_URL
       ? `${BASE_URL}/${pageId}`
@@ -149,6 +238,87 @@ app.get('/admin/feedback', (req, res) => {
     status: item.status,
     createdAt: item.created_at,
   })));
+});
+
+// === Auth & Billing API ===
+
+// GET /api/me — current user info + pro status
+app.get('/api/me', (req, res) => {
+  const userId = getAuthUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Not signed in' });
+
+  const user = db.getUser(userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  res.json({
+    clerkId: user.clerk_id,
+    email: user.email,
+    isPro: !!user.is_pro,
+    proExpiresAt: user.pro_expires_at,
+  });
+});
+
+// POST /api/auth/sync — called after Clerk sign-in to ensure user exists in DB
+app.post('/api/auth/sync', (req, res) => {
+  const userId = getAuthUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Not signed in' });
+
+  const { email } = req.body;
+  const user = db.getOrCreateUser(userId, email || null);
+
+  res.json({
+    clerkId: user.clerk_id,
+    email: user.email,
+    isPro: !!user.is_pro,
+    proExpiresAt: user.pro_expires_at,
+  });
+});
+
+// POST /api/checkout — create Stripe Checkout session
+app.post('/api/checkout', async (req, res) => {
+  const userId = getAuthUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Not signed in' });
+  if (!stripe || !process.env.STRIPE_PRICE_ID) {
+    return res.status(500).json({ error: 'Billing not configured' });
+  }
+
+  const user = db.getUser(userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.is_pro) return res.status(400).json({ error: 'Already subscribed' });
+
+  const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    payment_method_types: ['card'],
+    line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+    customer_email: user.email || undefined,
+    metadata: { clerk_id: userId },
+    success_url: `${baseUrl}/?pro=success`,
+    cancel_url: `${baseUrl}/?pro=cancel`,
+  });
+
+  res.json({ url: session.url });
+});
+
+// POST /api/billing-portal — Stripe Customer Portal for managing subscription
+app.post('/api/billing-portal', async (req, res) => {
+  const userId = getAuthUserId(req);
+  if (!userId) return res.status(401).json({ error: 'Not signed in' });
+  if (!stripe) return res.status(500).json({ error: 'Billing not configured' });
+
+  const user = db.getUser(userId);
+  if (!user || !user.stripe_customer_id) {
+    return res.status(400).json({ error: 'No billing account found' });
+  }
+
+  const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+  const session = await stripe.billingPortal.sessions.create({
+    customer: user.stripe_customer_id,
+    return_url: baseUrl,
+  });
+
+  res.json({ url: session.url });
 });
 
 // GET /:pageId — serve view.html for password prompt

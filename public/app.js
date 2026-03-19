@@ -1,4 +1,136 @@
 (() => {
+  // === Clerk Auth State ===
+  let clerkInstance = null;
+  let currentUser = null; // { clerkId, email, isPro, proExpiresAt }
+
+  const authNav = document.getElementById('authNav');
+  const proBadge = document.getElementById('proBadge');
+  const goProBtn = document.getElementById('goProBtn');
+  const goProBtn2 = document.getElementById('goProBtn2');
+  const manageBtn = document.getElementById('manageBtn');
+  const authUser = document.getElementById('authUser');
+  const authAvatar = document.getElementById('authAvatar');
+  const signOutBtn = document.getElementById('signOutBtn');
+  const signInBtn = document.getElementById('signInBtn');
+  const proUpsell = document.getElementById('proUpsell');
+
+  async function initClerk() {
+    const scriptTag = document.getElementById('clerk-script');
+    const publishableKey = scriptTag?.getAttribute('data-clerk-publishable-key');
+    if (!publishableKey) return; // Clerk not configured
+
+    // Wait for Clerk to load
+    await new Promise((resolve) => {
+      if (window.Clerk) return resolve();
+      scriptTag.addEventListener('load', resolve);
+    });
+
+    clerkInstance = window.Clerk;
+    await clerkInstance.load();
+
+    authNav.classList.remove('hidden');
+
+    clerkInstance.addListener(handleAuthChange);
+    handleAuthChange();
+  }
+
+  async function handleAuthChange() {
+    const user = clerkInstance?.user;
+
+    if (user) {
+      // Sync user to our DB
+      try {
+        const token = await clerkInstance.session.getToken();
+        const res = await fetch('/api/auth/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ email: user.primaryEmailAddress?.emailAddress }),
+        });
+        if (res.ok) {
+          currentUser = await res.json();
+        }
+      } catch (e) {
+        console.error('Auth sync failed:', e);
+      }
+
+      // Update UI
+      signInBtn.classList.add('hidden');
+      authUser.classList.remove('hidden');
+      authAvatar.src = user.imageUrl || '';
+
+      if (currentUser?.isPro) {
+        proBadge.classList.remove('hidden');
+        goProBtn.classList.add('hidden');
+        manageBtn.classList.remove('hidden');
+        proUpsell.classList.add('hidden');
+      } else {
+        proBadge.classList.add('hidden');
+        goProBtn.classList.remove('hidden');
+        manageBtn.classList.add('hidden');
+      }
+    } else {
+      // Signed out
+      currentUser = null;
+      signInBtn.classList.remove('hidden');
+      authUser.classList.add('hidden');
+      proBadge.classList.add('hidden');
+      goProBtn.classList.add('hidden');
+      manageBtn.classList.add('hidden');
+      proUpsell.classList.add('hidden');
+    }
+  }
+
+  async function startCheckout() {
+    if (!clerkInstance?.user) {
+      clerkInstance?.openSignIn();
+      return;
+    }
+    try {
+      const token = await clerkInstance.session.getToken();
+      const res = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (e) {
+      console.error('Checkout failed:', e);
+    }
+  }
+
+  async function openBillingPortal() {
+    try {
+      const token = await clerkInstance.session.getToken();
+      const res = await fetch('/api/billing-portal', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (e) {
+      console.error('Billing portal failed:', e);
+    }
+  }
+
+  // Auth event listeners
+  signInBtn?.addEventListener('click', () => clerkInstance?.openSignIn());
+  signOutBtn?.addEventListener('click', () => clerkInstance?.signOut());
+  goProBtn?.addEventListener('click', startCheckout);
+  goProBtn2?.addEventListener('click', startCheckout);
+  manageBtn?.addEventListener('click', openBillingPortal);
+
+  // Initialize Clerk
+  initClerk();
+
   // Elements
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
@@ -152,6 +284,11 @@
         createdAt: new Date().toISOString(),
         expiresAt: data.expiresAt,
       });
+
+      // Show Pro upsell for non-Pro users after upload
+      if (clerkInstance && !currentUser?.isPro) {
+        proUpsell.classList.remove('hidden');
+      }
 
       resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch {

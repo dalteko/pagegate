@@ -7,11 +7,13 @@
     "dev": "node server/index.js"
   },
   "dependencies": {
+    "@clerk/express": "^2.0.5",
     "bcrypt": "^5.1.1",
     "better-sqlite3": "^11.0.0",
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
-    "multer": "^2.1.1"
+    "multer": "^2.1.1",
+    "stripe": "^20.4.1"
   },
   "devDependencies": {
     "serve": "^14.2.6"

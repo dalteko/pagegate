@@ -15,9 +15,33 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="style.css">
   <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.tagged-events.js"></script>
+  <script
+    data-clerk-publishable-key=""
+    id="clerk-script"
+    async
+    crossorigin="anonymous"
+    type="text/javascript"
+    src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+  ></script>
 </head>
 <body>
   <div class="container">
+    <!-- Auth nav bar -->
+    <nav class="auth-nav hidden" id="authNav">
+      <div class="auth-nav-left">
+        <span class="pro-badge hidden" id="proBadge">PRO</span>
+      </div>
+      <div class="auth-nav-right">
+        <button class="btn-go-pro hidden" id="goProBtn">Go Pro — $3/mo</button>
+        <button class="btn-manage hidden" id="manageBtn">Manage Billing</button>
+        <div class="auth-user hidden" id="authUser">
+          <img class="auth-avatar" id="authAvatar" src="" alt="">
+          <button class="btn-text btn-signout" id="signOutBtn">Sign out</button>
+        </div>
+        <button class="btn-signin hidden" id="signInBtn">Sign in with Google</button>
+      </div>
+    </nav>
+
     <header class="header">
       <h1 class="logo">PageGate</h1>
       <p class="tagline">
@@ -94,6 +118,10 @@
         <p class="result-meta" id="expirationNote"></p>
       </div>
       <button class="btn-secondary" id="resetBtn">Share another</button>
+      <div class="pro-upsell hidden" id="proUpsell">
+        <p>Want custom URLs and longer expiration?</p>
+        <button class="btn-go-pro" id="goProBtn2">Go Pro — $3/mo</button>
+      </div>
     </section>
 
     <!-- History Section (shown if localStorage has items) -->

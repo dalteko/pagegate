@@ -46,6 +46,26 @@ db.exec(`
   )
 `);
 
+// === Pro tier tables ===
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    clerk_id TEXT PRIMARY KEY,
+    email TEXT,
+    is_pro INTEGER DEFAULT 0,
+    stripe_customer_id TEXT,
+    stripe_subscription_id TEXT,
+    pro_expires_at TEXT,
+    created_at TEXT NOT NULL
+  )
+`);
+
+// Migration: add user_id column to pages if it doesn't exist
+try {
+  db.exec(`ALTER TABLE pages ADD COLUMN user_id TEXT REFERENCES users(clerk_id)`);
+} catch (e) {
+  // Column already exists — ignore
+}
+
 
 const insertStmt = db.prepare(`
   INSERT INTO pages (id, password_hash, original_filename, file_size, created_at, expires_at, encryption_salt)
@@ -95,6 +115,21 @@ const listVotedByIpStmt = db.prepare(`
   SELECT item_id FROM feedback_votes WHERE ip_hash = ?
 `);
 
+// User statements
+const upsertUserStmt = db.prepare(`
+  INSERT INTO users (clerk_id, email, created_at) VALUES (?, ?, ?)
+  ON CONFLICT(clerk_id) DO UPDATE SET email = excluded.email
+`);
+const getUserStmt = db.prepare(`SELECT * FROM users WHERE clerk_id = ?`);
+const updateUserProStmt = db.prepare(`
+  UPDATE users SET is_pro = ?, stripe_customer_id = ?, stripe_subscription_id = ?, pro_expires_at = ? WHERE clerk_id = ?
+`);
+const getUserByStripeCustomerStmt = db.prepare(`SELECT * FROM users WHERE stripe_customer_id = ?`);
+const getUserPagesStmt = db.prepare(`
+  SELECT id, original_filename, file_size, created_at, expires_at FROM pages WHERE user_id = ? ORDER BY created_at DESC
+`);
+const setPageOwnerStmt = db.prepare(`UPDATE pages SET user_id = ? WHERE id = ?`);
+
 
 module.exports = {
   insertPage(page) {
@@ -138,5 +173,32 @@ module.exports = {
   deleteFeedback(id) {
     deleteFeedbackVotesStmt.run(id);
     return deleteFeedbackStmt.run(id);
+  },
+
+  // User methods
+  getOrCreateUser(clerkId, email) {
+    upsertUserStmt.run(clerkId, email, new Date().toISOString());
+    return getUserStmt.get(clerkId);
+  },
+  getUser(clerkId) {
+    return getUserStmt.get(clerkId);
+  },
+  updateUserPro(clerkId, { isPro, stripeCustomerId, stripeSubscriptionId, proExpiresAt }) {
+    return updateUserProStmt.run(
+      isPro ? 1 : 0,
+      stripeCustomerId || null,
+      stripeSubscriptionId || null,
+      proExpiresAt || null,
+      clerkId
+    );
+  },
+  getUserByStripeCustomer(stripeCustomerId) {
+    return getUserByStripeCustomerStmt.get(stripeCustomerId);
+  },
+  getUserPages(clerkId) {
+    return getUserPagesStmt.all(clerkId);
+  },
+  setPageOwner(pageId, clerkId) {
+    return setPageOwnerStmt.run(clerkId, pageId);
   },
 };

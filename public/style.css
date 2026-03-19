@@ -42,6 +42,121 @@ body {
   padding: 48px 20px 32px;
 }
 
+/* === Auth Nav === */
+.auth-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 8px 0;
+}
+
+.auth-nav-left,
+.auth-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pro-badge {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: white;
+  background: linear-gradient(135deg, var(--accent), #8B5CF6);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.btn-go-pro {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, var(--accent), #8B5CF6);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.1s ease;
+}
+
+.btn-go-pro:hover {
+  opacity: 0.9;
+}
+
+.btn-go-pro:active {
+  transform: scale(0.98);
+}
+
+.btn-manage {
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.btn-manage:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+.btn-signin {
+  padding: 8px 16px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.btn-signin:hover {
+  border-color: var(--border-hover);
+}
+
+.auth-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.btn-signout {
+  font-size: 0.75rem;
+}
+
+/* === Pro Upsell === */
+.pro-upsell {
+  text-align: center;
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--accent-bg);
+  border-radius: var(--radius-sm);
+}
+
+.pro-upsell p {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
 /* === Header === */
 .header {
   text-align: center;
