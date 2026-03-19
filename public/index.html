@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="style.css">
   <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.tagged-events.js"></script>
   <script
-    data-clerk-publishable-key=""
+    data-clerk-publishable-key="__CLERK_PUBLISHABLE_KEY__"
     id="clerk-script"
     async
     crossorigin="anonymous"
@@ -124,7 +124,7 @@
       </div>
       <div class="input-group">
         <label for="passwordInput">Set a password</label>
-        <input type="text" id="passwordInput" placeholder="Enter a password for this page" autocomplete="off">
+        <input type="password" id="passwordInput" placeholder="Enter a password for this page" autocomplete="off">
       </div>
       <button class="btn-primary" id="generateBtn">Generate Link</button>
     </section>

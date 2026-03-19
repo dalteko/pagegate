@@ -7,7 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="style.css">
   <script
-    data-clerk-publishable-key=""
+    data-clerk-publishable-key="__CLERK_PUBLISHABLE_KEY__"
     id="clerk-script"
     async
     crossorigin="anonymous"
@@ -49,11 +49,11 @@
         <p class="modal-note">Enter your current password and a new one. The page will be re-encrypted with the new password.</p>
         <div class="input-group">
           <label for="oldPasswordInput">Current password</label>
-          <input type="text" id="oldPasswordInput" placeholder="Enter current password" autocomplete="off">
+          <input type="password" id="oldPasswordInput" placeholder="Enter current password" autocomplete="off">
         </div>
         <div class="input-group">
           <label for="newPasswordInput">New password</label>
-          <input type="text" id="newPasswordInput" placeholder="Enter new password" autocomplete="off">
+          <input type="password" id="newPasswordInput" placeholder="Enter new password" autocomplete="off">
         </div>
         <p class="modal-error hidden" id="modalError"></p>
         <div class="modal-actions">

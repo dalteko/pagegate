@@ -79,6 +79,10 @@ const insertStmt = db.prepare(`
   VALUES (@id, @password_hash, @original_filename, @file_size, @created_at, @expires_at, @encryption_salt)
 `);
 
+const updatePagePasswordAndSaltStmt = db.prepare(`
+  UPDATE pages SET password_hash = ?, encryption_salt = ? WHERE id = ?
+`);
+
 const getStmt = db.prepare(`
   SELECT * FROM pages WHERE id = ? AND expires_at > ?
 `);
@@ -144,6 +148,24 @@ const getPageByIdOnlyStmt = db.prepare(`SELECT * FROM pages WHERE id = ?`);
 const updatePageExpirationStmt = db.prepare(`UPDATE pages SET expires_at = ? WHERE id = ?`);
 const updatePageEncryptionSaltStmt = db.prepare(`UPDATE pages SET encryption_salt = ? WHERE id = ?`);
 
+// Atomic insert with owner and slug in a single transaction
+const insertPageAtomicFn = db.transaction((page) => {
+  insertStmt.run({
+    id: page.id,
+    password_hash: page.password_hash,
+    original_filename: page.original_filename,
+    file_size: page.file_size,
+    created_at: page.created_at,
+    expires_at: page.expires_at,
+    encryption_salt: page.encryption_salt,
+  });
+  if (page.user_id) {
+    setPageOwnerStmt.run(page.user_id, page.id);
+  }
+  if (page.slug) {
+    setPageSlugStmt.run(page.slug, page.id);
+  }
+});
 
 module.exports = {
   insertPage(page) {
@@ -235,5 +257,14 @@ module.exports = {
   },
   updatePageEncryptionSalt(pageId, salt) {
     return updatePageEncryptionSaltStmt.run(salt, pageId);
+  },
+  insertPageAtomic(page) {
+    return insertPageAtomicFn(page);
+  },
+  updatePagePasswordAndSalt(pageId, passwordHash, salt) {
+    return updatePagePasswordAndSaltStmt.run(passwordHash, salt, pageId);
+  },
+  deletePageById(pageId) {
+    return deletePageStmt.run(pageId);
   },
 };

@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const fs = require('fs');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const { clerkMiddleware, getAuth } = require('@clerk/express');
@@ -31,6 +32,12 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     console.error('Stripe webhook signature verification failed:', err.message);
     return res.status(400).json({ error: 'Invalid signature' });
   }
+
+  // Idempotency: skip already-processed events
+  if (isStripeEventProcessed(event.id)) {
+    return res.json({ received: true, skipped: true });
+  }
+  markStripeEventProcessed(event.id);
 
   switch (event.type) {
     case 'checkout.session.completed': {
@@ -67,7 +74,7 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
       const sub = event.data.object;
       const user = db.getUserByStripeCustomer(sub.customer);
       if (user) {
-        const isActive = sub.status === 'active' || sub.status === 'trialing';
+        const isActive = sub.status === 'active' || sub.status === 'trialing' || sub.status === 'past_due';
         db.updateUserPro(user.clerk_id, {
           isPro: isActive,
           stripeCustomerId: user.stripe_customer_id,
@@ -84,7 +91,28 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
 
 // Middleware
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Inject Clerk publishable key into HTML files at serve time
+const CLERK_PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY || '';
+const publicDir = path.join(__dirname, '..', 'public');
+
+app.use((req, res, next) => {
+  // Only intercept requests for HTML files that need key injection
+  if (CLERK_PUBLISHABLE_KEY && (req.path === '/' || req.path === '/index.html' || req.path === '/dashboard.html')) {
+    const filePath = req.path === '/' ? path.join(publicDir, 'index.html') : path.join(publicDir, req.path);
+    try {
+      let html = fs.readFileSync(filePath, 'utf-8');
+      html = html.replace('__CLERK_PUBLISHABLE_KEY__', CLERK_PUBLISHABLE_KEY);
+      res.type('html').send(html);
+    } catch {
+      next();
+    }
+    return;
+  }
+  next();
+});
+
+app.use(express.static(publicDir));
 
 // Clerk auth middleware — populates req.auth for all routes
 if (process.env.CLERK_SECRET_KEY) {
@@ -98,6 +126,40 @@ function getAuthUserId(req) {
     return userId || null;
   } catch {
     return null;
+  }
+}
+
+// Helper: check if user has active Pro status (including grace period)
+function isUserPro(user) {
+  if (!user) return false;
+  if (user.is_pro) return true;
+  // Grace period: is_pro is false but pro_expires_at is in the future
+  if (user.pro_expires_at && new Date(user.pro_expires_at) > new Date()) return true;
+  return false;
+}
+
+// Track processed Stripe event IDs to prevent duplicate processing
+const processedStripeEvents = new Map(); // eventId -> timestamp
+const STRIPE_EVENT_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+function isStripeEventProcessed(eventId) {
+  const ts = processedStripeEvents.get(eventId);
+  if (!ts) return false;
+  if (Date.now() - ts > STRIPE_EVENT_TTL) {
+    processedStripeEvents.delete(eventId);
+    return false;
+  }
+  return true;
+}
+
+function markStripeEventProcessed(eventId) {
+  processedStripeEvents.set(eventId, Date.now());
+  // Prune old entries periodically
+  if (processedStripeEvents.size > 1000) {
+    const cutoff = Date.now() - STRIPE_EVENT_TTL;
+    for (const [id, ts] of processedStripeEvents) {
+      if (ts < cutoff) processedStripeEvents.delete(id);
+    }
   }
 }
 
@@ -153,7 +215,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const userId = getAuthUserId(req);
     let user = null;
     if (userId) user = db.getUser(userId);
-    const isPro = user?.is_pro;
+    const isPro = isUserPro(user);
 
     // Validate slug (Pro only)
     if (slug) {
@@ -183,22 +245,25 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const passwordHash = await bcrypt.hash(password.trim(), 10);
 
     const encryptionSalt = storage.savePageEncrypted(pageId, file.buffer, password.trim());
-    db.insertPage({
-      id: pageId,
-      password_hash: passwordHash,
-      original_filename: file.originalname,
-      file_size: file.size,
-      created_at: now.toISOString(),
-      expires_at: expiresAt.toISOString(),
-      encryption_salt: encryptionSalt,
-    });
-
-    // Link page to authenticated user and set slug
-    if (userId) {
-      db.setPageOwner(pageId, userId);
-    }
-    if (slug) {
-      db.setPageSlug(pageId, slug);
+    try {
+      db.insertPageAtomic({
+        id: pageId,
+        password_hash: passwordHash,
+        original_filename: file.originalname,
+        file_size: file.size,
+        created_at: now.toISOString(),
+        expires_at: expiresAt.toISOString(),
+        encryption_salt: encryptionSalt,
+        user_id: userId || null,
+        slug: slug || null,
+      });
+    } catch (err) {
+      // Clean up the encrypted file since DB insert failed
+      storage.deletePage(pageId);
+      if (err.code === 'SQLITE_CONSTRAINT_UNIQUE' || err.message?.includes('UNIQUE constraint failed')) {
+        return res.status(409).json({ error: 'This URL is already taken' });
+      }
+      throw err;
     }
 
     const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
@@ -302,7 +367,7 @@ app.get('/api/me', (req, res) => {
   res.json({
     clerkId: user.clerk_id,
     email: user.email,
-    isPro: !!user.is_pro,
+    isPro: isUserPro(user),
     proExpiresAt: user.pro_expires_at,
   });
 });
@@ -318,7 +383,7 @@ app.post('/api/auth/sync', (req, res) => {
   res.json({
     clerkId: user.clerk_id,
     email: user.email,
-    isPro: !!user.is_pro,
+    isPro: isUserPro(user),
     proExpiresAt: user.pro_expires_at,
   });
 });
@@ -334,7 +399,7 @@ app.post('/api/checkout', async (req, res) => {
 
     const user = db.getUser(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    if (user.is_pro) return res.status(400).json({ error: 'Already subscribed' });
+    if (isUserPro(user)) return res.status(400).json({ error: 'Already subscribed' });
 
     const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
 
@@ -427,6 +492,11 @@ app.patch('/api/pages/:pageId/password', async (req, res) => {
     if (!page) return res.status(404).json({ error: 'Page not found' });
     if (page.user_id !== userId) return res.status(403).json({ error: 'Not your page' });
 
+    // Check if page has expired and file may have been cleaned up
+    if (new Date(page.expires_at) < new Date()) {
+      return res.status(410).json({ error: 'Page has expired' });
+    }
+
     // Verify old password
     const match = await bcrypt.compare(oldPassword.trim(), page.password_hash);
     if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
@@ -434,11 +504,10 @@ app.patch('/api/pages/:pageId/password', async (req, res) => {
     // Decrypt with old password, re-encrypt with new password
     if (page.encryption_salt) {
       const html = storage.readPageEncrypted(page.id, oldPassword.trim(), page.encryption_salt);
-      if (!html) return res.status(500).json({ error: 'Failed to decrypt page' });
+      if (!html) return res.status(500).json({ error: 'Failed to decrypt page — file may have been cleaned up' });
       const newSalt = storage.savePageEncrypted(page.id, Buffer.from(html, 'utf-8'), password.trim());
-      db.updatePagePassword(page.id, await bcrypt.hash(password.trim(), 10));
-      // Update the encryption salt in DB
-      db.updatePageEncryptionSalt(page.id, newSalt);
+      const newHash = await bcrypt.hash(password.trim(), 10);
+      db.updatePagePasswordAndSalt(page.id, newHash, newSalt);
     } else {
       // Legacy plaintext — just update the hash
       db.updatePagePassword(page.id, await bcrypt.hash(password.trim(), 10));
@@ -451,9 +520,18 @@ app.patch('/api/pages/:pageId/password', async (req, res) => {
   }
 });
 
-// GET /dashboard — serve dashboard page
+// GET /dashboard — serve dashboard page (with Clerk key injected)
 app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'dashboard.html'));
+  const filePath = path.join(publicDir, 'dashboard.html');
+  try {
+    let html = fs.readFileSync(filePath, 'utf-8');
+    if (CLERK_PUBLISHABLE_KEY) {
+      html = html.replace('__CLERK_PUBLISHABLE_KEY__', CLERK_PUBLISHABLE_KEY);
+    }
+    res.type('html').send(html);
+  } catch {
+    res.status(500).send('Dashboard not found');
+  }
 });
 
 // GET /:slug — serve view.html for password prompt (supports both pageId and custom slugs)
@@ -463,7 +541,7 @@ app.get('/:pageIdOrSlug', (req, res) => {
   // Match 8-char nanoid IDs
   if (/^[A-Za-z0-9_-]{8}$/.test(param)) {
     res.set('X-Frame-Options', 'DENY');
-    return res.sendFile(path.join(__dirname, '..', 'public', 'view.html'));
+    return res.sendFile(path.join(publicDir, 'view.html'));
   }
 
   // Match custom slugs (lowercase, hyphens, 3+ chars)
@@ -471,7 +549,7 @@ app.get('/:pageIdOrSlug', (req, res) => {
     const page = db.getPageBySlug(param);
     if (page) {
       res.set('X-Frame-Options', 'DENY');
-      return res.sendFile(path.join(__dirname, '..', 'public', 'view.html'));
+      return res.sendFile(path.join(publicDir, 'view.html'));
     }
   }
 
@@ -480,11 +558,12 @@ app.get('/:pageIdOrSlug', (req, res) => {
 
 // Cleanup: delete expired pages from disk + DB on startup and every 24h
 function cleanupExpired() {
+  // Delete one at a time: remove from DB first (so no one can look it up), then delete file
   const expiredIds = db.getExpiredIds();
   for (const id of expiredIds) {
+    db.deletePageById(id);
     storage.deletePage(id);
   }
-  db.deleteExpired();
   if (expiredIds.length > 0) {
     console.log(`Cleaned up ${expiredIds.length} expired page(s)`);
   }
