@@ -103,12 +103,19 @@
       clerkInstance = window.Clerk;
       await clerkInstance.load();
 
+      clerkInstance.addListener(handleAuthChange);
+      handleAuthChange();
+    }
+
+    function handleAuthChange() {
       if (clerkInstance.user) {
         dashLoading.classList.add('hidden');
+        dashAuthRequired.classList.add('hidden');
         dashContent.classList.remove('hidden');
         loadPages();
       } else {
         dashLoading.classList.add('hidden');
+        dashContent.classList.add('hidden');
         dashAuthRequired.classList.remove('hidden');
       }
     }
