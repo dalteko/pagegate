@@ -325,49 +325,59 @@ app.post('/api/auth/sync', (req, res) => {
 
 // POST /api/checkout — create Stripe Checkout session
 app.post('/api/checkout', async (req, res) => {
-  const userId = getAuthUserId(req);
-  if (!userId) return res.status(401).json({ error: 'Not signed in' });
-  if (!stripe || !process.env.STRIPE_PRICE_ID) {
-    return res.status(500).json({ error: 'Billing not configured' });
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Not signed in' });
+    if (!stripe || !process.env.STRIPE_PRICE_ID) {
+      return res.status(500).json({ error: 'Billing not configured' });
+    }
+
+    const user = db.getUser(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.is_pro) return res.status(400).json({ error: 'Already subscribed' });
+
+    const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      payment_method_types: ['card'],
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      customer_email: user.email || undefined,
+      metadata: { clerk_id: userId },
+      success_url: `${baseUrl}/?pro=success`,
+      cancel_url: `${baseUrl}/?pro=cancel`,
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('Checkout error:', err);
+    res.status(500).json({ error: 'Failed to create checkout session' });
   }
-
-  const user = db.getUser(userId);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  if (user.is_pro) return res.status(400).json({ error: 'Already subscribed' });
-
-  const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
-
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    payment_method_types: ['card'],
-    line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
-    customer_email: user.email || undefined,
-    metadata: { clerk_id: userId },
-    success_url: `${baseUrl}/?pro=success`,
-    cancel_url: `${baseUrl}/?pro=cancel`,
-  });
-
-  res.json({ url: session.url });
 });
 
 // POST /api/billing-portal — Stripe Customer Portal for managing subscription
 app.post('/api/billing-portal', async (req, res) => {
-  const userId = getAuthUserId(req);
-  if (!userId) return res.status(401).json({ error: 'Not signed in' });
-  if (!stripe) return res.status(500).json({ error: 'Billing not configured' });
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Not signed in' });
+    if (!stripe) return res.status(500).json({ error: 'Billing not configured' });
 
-  const user = db.getUser(userId);
-  if (!user || !user.stripe_customer_id) {
-    return res.status(400).json({ error: 'No billing account found' });
+    const user = db.getUser(userId);
+    if (!user || !user.stripe_customer_id) {
+      return res.status(400).json({ error: 'No billing account found' });
+    }
+
+    const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.stripe_customer_id,
+      return_url: baseUrl,
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('Billing portal error:', err);
+    res.status(500).json({ error: 'Failed to open billing portal' });
   }
-
-  const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
-  const session = await stripe.billingPortal.sessions.create({
-    customer: user.stripe_customer_id,
-    return_url: baseUrl,
-  });
-
-  res.json({ url: session.url });
 });
 
 // === Dashboard API (Pro) ===
@@ -403,32 +413,42 @@ app.delete('/api/pages/:pageId', (req, res) => {
 });
 
 // PATCH /api/pages/:pageId/password — update password (owner only)
+// Requires the old password to re-encrypt the file with the new one.
 app.patch('/api/pages/:pageId/password', async (req, res) => {
-  const userId = getAuthUserId(req);
-  if (!userId) return res.status(401).json({ error: 'Not signed in' });
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Not signed in' });
 
-  const { password } = req.body;
-  if (!password || !password.trim()) return res.status(400).json({ error: 'Password is required' });
+    const { oldPassword, password } = req.body;
+    if (!password || !password.trim()) return res.status(400).json({ error: 'New password is required' });
+    if (!oldPassword || !oldPassword.trim()) return res.status(400).json({ error: 'Current password is required' });
 
-  const page = db.getPageById(req.params.pageId);
-  if (!page) return res.status(404).json({ error: 'Page not found' });
-  if (page.user_id !== userId) return res.status(403).json({ error: 'Not your page' });
+    const page = db.getPageById(req.params.pageId);
+    if (!page) return res.status(404).json({ error: 'Page not found' });
+    if (page.user_id !== userId) return res.status(403).json({ error: 'Not your page' });
 
-  // Re-encrypt the file with new password
-  const oldHtml = page.encryption_salt
-    ? null // We can't decrypt without the old password
-    : storage.readPagePlaintext(page.id);
+    // Verify old password
+    const match = await bcrypt.compare(oldPassword.trim(), page.password_hash);
+    if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
 
-  // For encrypted pages, we need the old password to re-encrypt
-  // Since we don't have it, just update the bcrypt hash
-  // Note: the file remains encrypted with the original password
-  // The user must provide the new password when viewing, so this changes
-  // only the verification hash. In practice, users should re-upload if they
-  // want full re-encryption with a new password.
-  const passwordHash = await bcrypt.hash(password.trim(), 10);
-  db.updatePagePassword(page.id, passwordHash);
+    // Decrypt with old password, re-encrypt with new password
+    if (page.encryption_salt) {
+      const html = storage.readPageEncrypted(page.id, oldPassword.trim(), page.encryption_salt);
+      if (!html) return res.status(500).json({ error: 'Failed to decrypt page' });
+      const newSalt = storage.savePageEncrypted(page.id, Buffer.from(html, 'utf-8'), password.trim());
+      db.updatePagePassword(page.id, await bcrypt.hash(password.trim(), 10));
+      // Update the encryption salt in DB
+      db.updatePageEncryptionSalt(page.id, newSalt);
+    } else {
+      // Legacy plaintext — just update the hash
+      db.updatePagePassword(page.id, await bcrypt.hash(password.trim(), 10));
+    }
 
-  res.json({ ok: true });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Password update error:', err);
+    res.status(500).json({ error: 'Password update failed' });
+  }
 });
 
 // GET /dashboard — serve dashboard page

@@ -142,6 +142,7 @@ const updatePagePasswordStmt = db.prepare(`UPDATE pages SET password_hash = ? WH
 const deletePageStmt = db.prepare(`DELETE FROM pages WHERE id = ?`);
 const getPageByIdOnlyStmt = db.prepare(`SELECT * FROM pages WHERE id = ?`);
 const updatePageExpirationStmt = db.prepare(`UPDATE pages SET expires_at = ? WHERE id = ?`);
+const updatePageEncryptionSaltStmt = db.prepare(`UPDATE pages SET encryption_salt = ? WHERE id = ?`);
 
 
 module.exports = {
@@ -231,5 +232,8 @@ module.exports = {
   },
   updatePageExpiration(pageId, expiresAt) {
     return updatePageExpirationStmt.run(expiresAt, pageId);
+  },
+  updatePageEncryptionSalt(pageId, salt) {
+    return updatePageEncryptionSaltStmt.run(salt, pageId);
   },
 };

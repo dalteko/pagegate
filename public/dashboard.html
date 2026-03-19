@@ -46,7 +46,11 @@
     <div class="modal-overlay hidden" id="passwordModal">
       <div class="modal-card">
         <h3>Update Password</h3>
-        <p class="modal-note">Note: This changes the verification password. The page file remains encrypted with the original password — viewers will need to use the new password.</p>
+        <p class="modal-note">Enter your current password and a new one. The page will be re-encrypted with the new password.</p>
+        <div class="input-group">
+          <label for="oldPasswordInput">Current password</label>
+          <input type="text" id="oldPasswordInput" placeholder="Enter current password" autocomplete="off">
+        </div>
         <div class="input-group">
           <label for="newPasswordInput">New password</label>
           <input type="text" id="newPasswordInput" placeholder="Enter new password" autocomplete="off">
@@ -63,7 +67,10 @@
   <script>
   (() => {
     let clerkInstance = null;
-    let currentToken = null;
+
+    async function getToken() {
+      return clerkInstance?.session?.getToken() || null;
+    }
 
     const dashLoading = document.getElementById('dashLoading');
     const dashAuthRequired = document.getElementById('dashAuthRequired');
@@ -73,6 +80,7 @@
     const dashSignInBtn = document.getElementById('dashSignInBtn');
 
     const passwordModal = document.getElementById('passwordModal');
+    const oldPasswordInput = document.getElementById('oldPasswordInput');
     const newPasswordInput = document.getElementById('newPasswordInput');
     const modalError = document.getElementById('modalError');
     const modalCancelBtn = document.getElementById('modalCancelBtn');
@@ -96,7 +104,6 @@
       await clerkInstance.load();
 
       if (clerkInstance.user) {
-        currentToken = await clerkInstance.session.getToken();
         dashLoading.classList.add('hidden');
         dashContent.classList.remove('hidden');
         loadPages();
@@ -110,8 +117,9 @@
 
     async function loadPages() {
       try {
+        const token = await getToken();
         const res = await fetch('/api/pages', {
-          headers: { 'Authorization': `Bearer ${currentToken}` },
+          headers: { 'Authorization': `Bearer ${token}` },
         });
         if (!res.ok) return;
         const pages = await res.json();
@@ -193,16 +201,18 @@
         window.open(btn.dataset.slug, '_blank');
       } else if (action === 'password') {
         editingPageId = btn.dataset.id;
+        oldPasswordInput.value = '';
         newPasswordInput.value = '';
         modalError.classList.add('hidden');
         passwordModal.classList.remove('hidden');
-        newPasswordInput.focus();
+        oldPasswordInput.focus();
       } else if (action === 'delete') {
         if (!confirm('Delete this page? This cannot be undone.')) return;
         try {
+          const token = await getToken();
           const res = await fetch(`/api/pages/${btn.dataset.id}`, {
             method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${currentToken}` },
+            headers: { 'Authorization': `Bearer ${token}` },
           });
           if (res.ok) loadPages();
         } catch (e) {
@@ -214,21 +224,28 @@
     // Password modal
     modalCancelBtn.addEventListener('click', () => passwordModal.classList.add('hidden'));
     modalSaveBtn.addEventListener('click', async () => {
+      const oldPw = oldPasswordInput.value.trim();
       const pw = newPasswordInput.value.trim();
+      if (!oldPw) {
+        modalError.textContent = 'Current password is required';
+        modalError.classList.remove('hidden');
+        return;
+      }
       if (!pw) {
-        modalError.textContent = 'Password is required';
+        modalError.textContent = 'New password is required';
         modalError.classList.remove('hidden');
         return;
       }
       modalSaveBtn.disabled = true;
       try {
+        const token = await getToken();
         const res = await fetch(`/api/pages/${editingPageId}/password`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${currentToken}`,
+            'Authorization': `Bearer ${token}`,
           },
-          body: JSON.stringify({ password: pw }),
+          body: JSON.stringify({ oldPassword: oldPw, password: pw }),
         });
         if (res.ok) {
           passwordModal.classList.add('hidden');

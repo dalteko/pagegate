@@ -289,14 +289,17 @@
 
       // Format expiration date
       const expDate = new Date(data.expiresAt);
-      const expStr = expDate.toLocaleDateString('en-US', {
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      });
-
       linkOutput.value = data.url;
-      expirationNote.textContent = `Expires ${expStr}`;
+      if (expDate.getFullYear() >= 9999) {
+        expirationNote.textContent = 'Never expires';
+      } else {
+        const expStr = expDate.toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+        });
+        expirationNote.textContent = `Expires ${expStr}`;
+      }
       resultSection.classList.remove('hidden');
       passwordSection.classList.add('hidden');
 
@@ -446,11 +449,14 @@
       item.className = 'history-item';
 
       const expires = new Date(entry.expiresAt);
+      const isNever = expires.getFullYear() >= 9999;
       const daysLeft = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
-      const isExpired = daysLeft <= 0;
+      const isExpired = !isNever && daysLeft <= 0;
 
       let metaText;
-      if (isExpired) {
+      if (isNever) {
+        metaText = 'Never expires';
+      } else if (isExpired) {
         metaText = '<span class="expired">Expired</span>';
       } else if (daysLeft === 1) {
         metaText = '1 day left';
