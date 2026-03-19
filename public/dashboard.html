@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — PageGate Pro</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="style.css">
+  <script
+    data-clerk-publishable-key=""
+    id="clerk-script"
+    async
+    crossorigin="anonymous"
+    type="text/javascript"
+    src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+  ></script>
+</head>
+<body>
+  <div class="container">
+    <header class="dash-header">
+      <a href="/" class="logo-link">PageGate</a>
+      <span class="pro-badge">PRO</span>
+    </header>
+
+    <div class="dash-loading" id="dashLoading">Loading...</div>
+
+    <div class="dash-auth-required hidden" id="dashAuthRequired">
+      <p>Sign in to access your dashboard.</p>
+      <button class="btn-primary" id="dashSignInBtn" style="max-width:300px;margin:16px auto;">Sign in with Google</button>
+    </div>
+
+    <div class="dash-content hidden" id="dashContent">
+      <div class="section-header">
+        <h2>My Pages</h2>
+        <a href="/" class="btn-text">Upload new</a>
+      </div>
+
+      <div class="dash-empty hidden" id="dashEmpty">
+        <p>No pages yet. <a href="/">Upload your first page</a>.</p>
+      </div>
+
+      <div class="dash-pages" id="dashPages"></div>
+    </div>
+
+    <!-- Password update modal -->
+    <div class="modal-overlay hidden" id="passwordModal">
+      <div class="modal-card">
+        <h3>Update Password</h3>
+        <p class="modal-note">Note: This changes the verification password. The page file remains encrypted with the original password — viewers will need to use the new password.</p>
+        <div class="input-group">
+          <label for="newPasswordInput">New password</label>
+          <input type="text" id="newPasswordInput" placeholder="Enter new password" autocomplete="off">
+        </div>
+        <p class="modal-error hidden" id="modalError"></p>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="modalCancelBtn" style="width:auto;padding:10px 20px;">Cancel</button>
+          <button class="btn-primary" id="modalSaveBtn" style="width:auto;padding:10px 20px;">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    let clerkInstance = null;
+    let currentToken = null;
+
+    const dashLoading = document.getElementById('dashLoading');
+    const dashAuthRequired = document.getElementById('dashAuthRequired');
+    const dashContent = document.getElementById('dashContent');
+    const dashEmpty = document.getElementById('dashEmpty');
+    const dashPages = document.getElementById('dashPages');
+    const dashSignInBtn = document.getElementById('dashSignInBtn');
+
+    const passwordModal = document.getElementById('passwordModal');
+    const newPasswordInput = document.getElementById('newPasswordInput');
+    const modalError = document.getElementById('modalError');
+    const modalCancelBtn = document.getElementById('modalCancelBtn');
+    const modalSaveBtn = document.getElementById('modalSaveBtn');
+    let editingPageId = null;
+
+    async function initClerk() {
+      const scriptTag = document.getElementById('clerk-script');
+      const publishableKey = scriptTag?.getAttribute('data-clerk-publishable-key');
+      if (!publishableKey) {
+        dashLoading.textContent = 'Auth not configured';
+        return;
+      }
+
+      await new Promise((resolve) => {
+        if (window.Clerk) return resolve();
+        scriptTag.addEventListener('load', resolve);
+      });
+
+      clerkInstance = window.Clerk;
+      await clerkInstance.load();
+
+      if (clerkInstance.user) {
+        currentToken = await clerkInstance.session.getToken();
+        dashLoading.classList.add('hidden');
+        dashContent.classList.remove('hidden');
+        loadPages();
+      } else {
+        dashLoading.classList.add('hidden');
+        dashAuthRequired.classList.remove('hidden');
+      }
+    }
+
+    dashSignInBtn?.addEventListener('click', () => clerkInstance?.openSignIn());
+
+    async function loadPages() {
+      try {
+        const res = await fetch('/api/pages', {
+          headers: { 'Authorization': `Bearer ${currentToken}` },
+        });
+        if (!res.ok) return;
+        const pages = await res.json();
+        renderPages(pages);
+      } catch (e) {
+        console.error('Failed to load pages:', e);
+      }
+    }
+
+    function renderPages(pages) {
+      dashPages.innerHTML = '';
+      if (pages.length === 0) {
+        dashEmpty.classList.remove('hidden');
+        return;
+      }
+      dashEmpty.classList.add('hidden');
+
+      const now = new Date();
+      pages.forEach(page => {
+        const el = document.createElement('div');
+        el.className = 'dash-page-item';
+
+        const expires = new Date(page.expiresAt);
+        const isNever = expires.getFullYear() >= 9999;
+        const daysLeft = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
+        const isExpired = !isNever && daysLeft <= 0;
+
+        let expiryText;
+        if (isNever) expiryText = 'Never expires';
+        else if (isExpired) expiryText = '<span class="expired">Expired</span>';
+        else if (daysLeft === 1) expiryText = '1 day left';
+        else expiryText = `${daysLeft} days left`;
+
+        const slug = page.slug ? `/${page.slug}` : `/${page.id}`;
+        const sizeKb = page.fileSize ? `${(page.fileSize / 1024).toFixed(1)} KB` : '';
+        const createdDate = new Date(page.createdAt).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric'
+        });
+
+        el.innerHTML = `
+          <div class="dash-page-info">
+            <div class="dash-page-name">${escapeHtml(page.filename || page.id)}</div>
+            <div class="dash-page-meta">
+              <span>${slug}</span>
+              <span class="dash-dot">&middot;</span>
+              <span>${sizeKb}</span>
+              <span class="dash-dot">&middot;</span>
+              <span>${createdDate}</span>
+              <span class="dash-dot">&middot;</span>
+              <span>${expiryText}</span>
+            </div>
+          </div>
+          <div class="dash-page-actions">
+            <button class="btn-icon" data-action="copy" data-slug="${escapeAttr(slug)}">Copy</button>
+            <button class="btn-icon" data-action="open" data-slug="${escapeAttr(slug)}">Open</button>
+            <button class="btn-icon" data-action="password" data-id="${escapeAttr(page.id)}">Password</button>
+            <button class="btn-icon btn-icon--delete" data-action="delete" data-id="${escapeAttr(page.id)}">Delete</button>
+          </div>
+        `;
+        dashPages.appendChild(el);
+      });
+    }
+
+    // Delegated click handler
+    dashPages.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.btn-icon');
+      if (!btn) return;
+      const action = btn.dataset.action;
+
+      if (action === 'copy') {
+        const url = window.location.origin + btn.dataset.slug;
+        try {
+          await navigator.clipboard.writeText(url);
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+        } catch { /* ignore */ }
+      } else if (action === 'open') {
+        window.open(btn.dataset.slug, '_blank');
+      } else if (action === 'password') {
+        editingPageId = btn.dataset.id;
+        newPasswordInput.value = '';
+        modalError.classList.add('hidden');
+        passwordModal.classList.remove('hidden');
+        newPasswordInput.focus();
+      } else if (action === 'delete') {
+        if (!confirm('Delete this page? This cannot be undone.')) return;
+        try {
+          const res = await fetch(`/api/pages/${btn.dataset.id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${currentToken}` },
+          });
+          if (res.ok) loadPages();
+        } catch (e) {
+          console.error('Delete failed:', e);
+        }
+      }
+    });
+
+    // Password modal
+    modalCancelBtn.addEventListener('click', () => passwordModal.classList.add('hidden'));
+    modalSaveBtn.addEventListener('click', async () => {
+      const pw = newPasswordInput.value.trim();
+      if (!pw) {
+        modalError.textContent = 'Password is required';
+        modalError.classList.remove('hidden');
+        return;
+      }
+      modalSaveBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/pages/${editingPageId}/password`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentToken}`,
+          },
+          body: JSON.stringify({ password: pw }),
+        });
+        if (res.ok) {
+          passwordModal.classList.add('hidden');
+        } else {
+          const data = await res.json();
+          modalError.textContent = data.error || 'Failed';
+          modalError.classList.remove('hidden');
+        }
+      } catch {
+        modalError.textContent = 'Connection error';
+        modalError.classList.remove('hidden');
+      } finally {
+        modalSaveBtn.disabled = false;
+      }
+    });
+
+    newPasswordInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') modalSaveBtn.click();
+    });
+
+    function escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+    function escapeAttr(str) {
+      return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    initClerk();
+  })();
+  </script>
+</body>
+</html>

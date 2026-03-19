@@ -66,6 +66,13 @@ try {
   // Column already exists — ignore
 }
 
+// Migration: add slug column to pages
+try {
+  db.exec(`ALTER TABLE pages ADD COLUMN slug TEXT UNIQUE`);
+} catch (e) {
+  // Column already exists — ignore
+}
+
 
 const insertStmt = db.prepare(`
   INSERT INTO pages (id, password_hash, original_filename, file_size, created_at, expires_at, encryption_salt)
@@ -126,9 +133,15 @@ const updateUserProStmt = db.prepare(`
 `);
 const getUserByStripeCustomerStmt = db.prepare(`SELECT * FROM users WHERE stripe_customer_id = ?`);
 const getUserPagesStmt = db.prepare(`
-  SELECT id, original_filename, file_size, created_at, expires_at FROM pages WHERE user_id = ? ORDER BY created_at DESC
+  SELECT id, original_filename, file_size, slug, created_at, expires_at FROM pages WHERE user_id = ? ORDER BY created_at DESC
 `);
 const setPageOwnerStmt = db.prepare(`UPDATE pages SET user_id = ? WHERE id = ?`);
+const getPageBySlugStmt = db.prepare(`SELECT * FROM pages WHERE slug = ? AND expires_at > ?`);
+const setPageSlugStmt = db.prepare(`UPDATE pages SET slug = ? WHERE id = ?`);
+const updatePagePasswordStmt = db.prepare(`UPDATE pages SET password_hash = ? WHERE id = ?`);
+const deletePageStmt = db.prepare(`DELETE FROM pages WHERE id = ?`);
+const getPageByIdOnlyStmt = db.prepare(`SELECT * FROM pages WHERE id = ?`);
+const updatePageExpirationStmt = db.prepare(`UPDATE pages SET expires_at = ? WHERE id = ?`);
 
 
 module.exports = {
@@ -200,5 +213,23 @@ module.exports = {
   },
   setPageOwner(pageId, clerkId) {
     return setPageOwnerStmt.run(clerkId, pageId);
+  },
+  getPageBySlug(slug) {
+    return getPageBySlugStmt.get(slug, new Date().toISOString());
+  },
+  setPageSlug(pageId, slug) {
+    return setPageSlugStmt.run(slug, pageId);
+  },
+  updatePagePassword(pageId, passwordHash) {
+    return updatePagePasswordStmt.run(passwordHash, pageId);
+  },
+  deletePage(pageId) {
+    return deletePageStmt.run(pageId);
+  },
+  getPageById(pageId) {
+    return getPageByIdOnlyStmt.get(pageId);
+  },
+  updatePageExpiration(pageId, expiresAt) {
+    return updatePageExpirationStmt.run(expiresAt, pageId);
   },
 };

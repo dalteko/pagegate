@@ -33,6 +33,7 @@
       </div>
       <div class="auth-nav-right">
         <button class="btn-go-pro hidden" id="goProBtn">Go Pro — $3/mo</button>
+        <a href="/dashboard" class="btn-dash hidden" id="dashBtn">Dashboard</a>
         <button class="btn-manage hidden" id="manageBtn">Manage Billing</button>
         <div class="auth-user hidden" id="authUser">
           <img class="auth-avatar" id="authAvatar" src="" alt="">
@@ -100,6 +101,27 @@
 
     <!-- Password Section (hidden initially) -->
     <section class="password-section hidden" id="passwordSection">
+      <!-- Pro fields: slug and expiration (shown for Pro users only) -->
+      <div class="pro-fields hidden" id="proFields">
+        <div class="input-group">
+          <label for="slugInput">Custom URL <span class="label-hint">(optional)</span></label>
+          <div class="slug-input-wrapper">
+            <span class="slug-prefix">pagegate.app/</span>
+            <input type="text" id="slugInput" placeholder="my-page-name" autocomplete="off" pattern="[a-z0-9-]+">
+          </div>
+          <p class="field-hint" id="slugHint"></p>
+        </div>
+        <div class="input-group">
+          <label for="expirationSelect">Expiration</label>
+          <select id="expirationSelect" class="select-input">
+            <option value="7">7 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="90">90 days</option>
+            <option value="365">1 year</option>
+            <option value="never">Never</option>
+          </select>
+        </div>
+      </div>
       <div class="input-group">
         <label for="passwordInput">Set a password</label>
         <input type="text" id="passwordInput" placeholder="Enter a password for this page" autocomplete="off">

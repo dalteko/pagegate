@@ -13,6 +13,11 @@
   const signOutBtn = document.getElementById('signOutBtn');
   const signInBtn = document.getElementById('signInBtn');
   const proUpsell = document.getElementById('proUpsell');
+  const proFields = document.getElementById('proFields');
+  const slugInput = document.getElementById('slugInput');
+  const slugHint = document.getElementById('slugHint');
+  const expirationSelect = document.getElementById('expirationSelect');
+  const dashBtn = document.getElementById('dashBtn');
 
   async function initClerk() {
     const scriptTag = document.getElementById('clerk-script');
@@ -65,11 +70,15 @@
         proBadge.classList.remove('hidden');
         goProBtn.classList.add('hidden');
         manageBtn.classList.remove('hidden');
+        dashBtn.classList.remove('hidden');
+        proFields?.classList.remove('hidden');
         proUpsell.classList.add('hidden');
       } else {
         proBadge.classList.add('hidden');
         goProBtn.classList.remove('hidden');
         manageBtn.classList.add('hidden');
+        dashBtn.classList.add('hidden');
+        proFields?.classList.add('hidden');
       }
     } else {
       // Signed out
@@ -79,6 +88,8 @@
       proBadge.classList.add('hidden');
       goProBtn.classList.add('hidden');
       manageBtn.classList.add('hidden');
+      dashBtn.classList.add('hidden');
+      proFields?.classList.add('hidden');
       proUpsell.classList.add('hidden');
     }
   }
@@ -253,7 +264,22 @@
       formData.append('file', currentFile);
       formData.append('password', password);
 
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      // Add Pro fields if available
+      if (currentUser?.isPro) {
+        const slug = slugInput?.value.trim().toLowerCase();
+        if (slug) formData.append('slug', slug);
+        const expiration = expirationSelect?.value;
+        if (expiration) formData.append('expiration', expiration);
+      }
+
+      // Include auth header if signed in
+      const headers = {};
+      if (clerkInstance?.session) {
+        const token = await clerkInstance.session.getToken();
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch('/api/upload', { method: 'POST', body: formData, headers });
       const data = await res.json();
 
       if (!res.ok) {
@@ -333,15 +359,35 @@
     currentFile = null;
     fileInput.value = '';
     passwordInput.value = '';
+    if (slugInput) slugInput.value = '';
+    if (slugHint) { slugHint.textContent = ''; slugHint.className = 'field-hint'; }
+    if (expirationSelect) expirationSelect.value = '30';
     fileInfo.textContent = '';
     previewFrame.srcdoc = '';
     dropzone.style.display = '';
     previewSection.classList.add('hidden');
     passwordSection.classList.add('hidden');
     resultSection.classList.add('hidden');
+    proUpsell.classList.add('hidden');
     copyBtn.textContent = 'Copy';
     copyBtn.classList.remove('copied');
   }
+
+  // Slug validation on input
+  slugInput?.addEventListener('input', () => {
+    const val = slugInput.value.trim().toLowerCase();
+    if (!val) { slugHint.textContent = ''; slugHint.className = 'field-hint'; return; }
+    if (val.length < 3) {
+      slugHint.textContent = 'At least 3 characters';
+      slugHint.className = 'field-hint field-hint--error';
+    } else if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(val)) {
+      slugHint.textContent = 'Lowercase letters, numbers, and hyphens only';
+      slugHint.className = 'field-hint field-hint--error';
+    } else {
+      slugHint.textContent = '';
+      slugHint.className = 'field-hint';
+    }
+  });
 
   // === History (localStorage) ===
   function getHistory() {
