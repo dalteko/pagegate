@@ -229,8 +229,8 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
 
     // Decrypt if encrypted, otherwise fall back to legacy plaintext
     const html = page.encryption_salt
-      ? storage.readPageEncrypted(pageId, password, page.encryption_salt)
-      : storage.readPagePlaintext(pageId);
+      ? storage.readPageEncrypted(page.id, password, page.encryption_salt)
+      : storage.readPagePlaintext(page.id);
     if (!html) return res.status(404).json({ error: 'Page file not found' });
 
     res.json({ html });
