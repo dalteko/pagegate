@@ -177,6 +177,72 @@ body {
   min-height: 1.25em;
 }
 
+/* === Paste HTML === */
+.btn-paste-toggle {
+  display: block;
+  margin: 12px auto 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px 8px;
+  transition: color 0.2s ease;
+}
+
+.btn-paste-toggle:hover {
+  color: #5B4BD5;
+}
+
+.paste-section {
+  margin-top: 12px;
+}
+
+.paste-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text);
+  background: var(--surface);
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s ease;
+  line-height: 1.5;
+}
+
+.paste-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.paste-textarea::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.paste-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.paste-actions .btn-secondary {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 12px 20px;
+}
+
+.paste-actions .btn-primary {
+  flex: 1;
+  padding: 12px 20px;
+}
+
 .upload-tagline {
   text-align: center;
   font-size: 0.8125rem;

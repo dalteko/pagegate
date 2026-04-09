@@ -21,6 +21,12 @@
 
   const MAX_SIZE = 5 * 1024 * 1024; // 5MB
   const STORAGE_KEY = 'pagegate_history';
+  const pasteSection = document.getElementById('pasteSection');
+  const pasteInput = document.getElementById('pasteInput');
+  const pasteToggleBtn = document.getElementById('pasteToggleBtn');
+  const pasteCancelBtn = document.getElementById('pasteCancelBtn');
+  const pasteUseBtn = document.getElementById('pasteUseBtn');
+
   let currentFile = null;
 
   // === Rotating tagline ===
@@ -54,6 +60,33 @@
 
   fileInput.addEventListener('change', () => {
     if (fileInput.files.length > 0) handleFile(fileInput.files[0]);
+  });
+
+  // === Paste HTML toggle ===
+  pasteToggleBtn.addEventListener('click', () => {
+    dropzone.style.display = 'none';
+    pasteToggleBtn.classList.add('hidden');
+    pasteSection.classList.remove('hidden');
+    pasteInput.focus();
+  });
+
+  pasteCancelBtn.addEventListener('click', () => {
+    pasteSection.classList.add('hidden');
+    pasteInput.value = '';
+    dropzone.style.display = '';
+    pasteToggleBtn.classList.remove('hidden');
+  });
+
+  pasteUseBtn.addEventListener('click', () => {
+    const html = pasteInput.value.trim();
+    if (!html) {
+      fileInfo.textContent = 'Paste some HTML code first.';
+      return;
+    }
+    const file = new File([html], 'pasted.html', { type: 'text/html' });
+    pasteSection.classList.add('hidden');
+    pasteToggleBtn.classList.add('hidden');
+    handleFile(file);
   });
 
   // === File handling ===
@@ -204,6 +237,9 @@
     resultSection.classList.add('hidden');
     copyBtn.textContent = 'Copy';
     copyBtn.classList.remove('copied');
+    pasteSection.classList.add('hidden');
+    pasteInput.value = '';
+    pasteToggleBtn.classList.remove('hidden');
   }
 
   // === History (localStorage) ===
