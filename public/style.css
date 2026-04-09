@@ -183,6 +183,9 @@ body {
   margin: 12px auto 0;
   background: none;
   border: none;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
   color: var(--accent);
   font-size: 0.875rem;
   font-weight: 500;
