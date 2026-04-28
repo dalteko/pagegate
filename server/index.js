@@ -3,19 +3,57 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
+const session = require('express-session');
+const SQLiteStore = require('connect-sqlite3')(session);
 const path = require('path');
 const db = require('./db');
 const storage = require('./storage');
+const { requireAuth, requirePro, optionalAuth } = require('./auth');
+const stripeService = require('./stripe');
+const config = require('./config');
 
 const app = express();
 const PORT = process.env.PORT || 3457;
 const BASE_URL = process.env.BASE_URL || '';
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 
 // Trust proxy (Railway/Cloudflare)
 app.set('trust proxy', 1);
 
+function requireProFeatures(req, res, next) {
+  if (!config.proEnabled) {
+    return res.status(404).json({ error: 'Pro features are disabled' });
+  }
+  next();
+}
+
+// Stripe webhook needs raw body — must come before express.json()
+app.post('/api/stripe/webhook', requireProFeatures, express.raw({ type: 'application/json' }), (req, res) => {
+  try {
+    const result = stripeService.handleWebhook(req.body, req.headers['stripe-signature']);
+    res.json(result);
+  } catch (err) {
+    console.error('Webhook error:', err.message);
+    res.status(400).json({ error: 'Webhook failed' });
+  }
+});
+
 // Middleware
 app.use(express.json());
+if (config.proEnabled) {
+  app.use(session({
+    store: new SQLiteStore({ dir: DATA_DIR, db: 'sessions.db' }),
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === 'production',
+      httpOnly: true,
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      sameSite: 'lax',
+    },
+  }));
+}
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // Multer: memory storage, 5MB limit
@@ -35,7 +73,7 @@ const verifyLimiter = rateLimit({
 });
 
 // POST /api/upload — upload HTML file + password
-app.post('/api/upload', upload.single('file'), async (req, res) => {
+app.post('/api/upload', optionalAuth, upload.single('file'), async (req, res) => {
   try {
     const file = req.file;
     const password = req.body.password;
@@ -52,7 +90,12 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const pageId = crypto.randomBytes(6).toString('base64url').slice(0, 8);
     const passwordHash = await bcrypt.hash(password.trim(), 10);
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    // Paid users get no expiration; everyone else gets 30 days
+    const isSubscribed = req.user && req.user.subscription_status === 'active';
+    const expiresAt = isSubscribed
+      ? new Date('9999-12-31T23:59:59.000Z')
+      : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     const encryptionSalt = storage.savePageEncrypted(pageId, file.buffer, password.trim());
     db.insertPage({
@@ -63,6 +106,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       created_at: now.toISOString(),
       expires_at: expiresAt.toISOString(),
       encryption_salt: encryptionSalt,
+      user_id: req.user ? req.user.id : null,
+      page_password: isSubscribed ? password.trim() : null,
     });
 
     const url = BASE_URL
@@ -99,6 +144,133 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
   } catch (err) {
     console.error('Verify error:', err);
     res.status(500).json({ error: 'Verification failed' });
+  }
+});
+
+// === Auth API ===
+
+const authLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.ip,
+  message: { error: 'Too many attempts. Try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.post('/api/auth/register', requireProFeatures, authLimiter, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      return res.status(400).json({ error: 'Invalid email address' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const existing = db.getUserByEmail(trimmedEmail);
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
+
+    const id = crypto.randomBytes(16).toString('hex');
+    const passwordHash = await bcrypt.hash(password, 10);
+    db.insertUser(id, trimmedEmail, passwordHash);
+
+    req.session.userId = id;
+    res.status(201).json({ user: { id, email: trimmedEmail, subscriptionStatus: 'none' } });
+  } catch (err) {
+    console.error('Register error:', err);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.post('/api/auth/login', requireProFeatures, authLimiter, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+
+    const user = db.getUserByEmail(email.trim().toLowerCase());
+    if (!user) return res.status(401).json({ error: 'Invalid email or password' });
+
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) return res.status(401).json({ error: 'Invalid email or password' });
+
+    req.session.userId = user.id;
+    res.json({ user: { id: user.id, email: user.email, subscriptionStatus: user.subscription_status } });
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/logout', requireProFeatures, (req, res) => {
+  req.session.destroy(() => {});
+  res.json({ ok: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  if (!config.proEnabled) return res.json({ user: null, proEnabled: false });
+  if (!req.session.userId) return res.json({ user: null });
+  const user = db.getUserById(req.session.userId);
+  if (!user) return res.json({ user: null });
+  res.json({
+    user: {
+      id: user.id,
+      email: user.email,
+      subscriptionStatus: user.subscription_status,
+    },
+  });
+});
+
+// === Dashboard API ===
+
+app.get('/api/pages', requireAuth, requirePro, (req, res) => {
+  const pages = db.getPagesByUser(req.user.id);
+  res.json(pages.map(p => ({
+    id: p.id,
+    filename: p.original_filename,
+    fileSize: p.file_size,
+    createdAt: p.created_at,
+    expiresAt: p.expires_at,
+    pagePassword: p.page_password,
+  })));
+});
+
+app.delete('/api/pages/:pageId', requireAuth, requirePro, (req, res) => {
+  const result = db.deletePageByUser(req.params.pageId, req.user.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Page not found' });
+  storage.deletePage(req.params.pageId);
+  res.json({ ok: true });
+});
+
+// === Stripe API ===
+
+app.post('/api/stripe/checkout', requireAuth, async (req, res) => {
+  try {
+    const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const session = await stripeService.createCheckoutSession(
+      req.user.id, req.user.email, req.user.stripe_customer_id, baseUrl
+    );
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('Checkout error:', err);
+    res.status(500).json({ error: 'Failed to create checkout session' });
+  }
+});
+
+app.post('/api/stripe/portal', requireAuth, async (req, res) => {
+  try {
+    if (!req.user.stripe_customer_id) {
+      return res.status(400).json({ error: 'No active subscription' });
+    }
+    const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const session = await stripeService.createPortalSession(req.user.stripe_customer_id, baseUrl);
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('Portal error:', err);
+    res.status(500).json({ error: 'Failed to create portal session' });
   }
 });
 

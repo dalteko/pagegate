@@ -27,6 +27,27 @@ try {
   // Column already exists — ignore
 }
 
+// === Users table ===
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    stripe_customer_id TEXT,
+    subscription_status TEXT DEFAULT 'none',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+
+// Migration: add user_id and page_password columns to pages
+try {
+  db.exec(`ALTER TABLE pages ADD COLUMN user_id TEXT`);
+} catch (e) { /* already exists */ }
+try {
+  db.exec(`ALTER TABLE pages ADD COLUMN page_password TEXT`);
+} catch (e) { /* already exists */ }
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS feedback (
     id TEXT PRIMARY KEY,
@@ -46,10 +67,18 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stripe_events (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    processed_at TEXT NOT NULL
+  )
+`);
+
 
 const insertStmt = db.prepare(`
-  INSERT INTO pages (id, password_hash, original_filename, file_size, created_at, expires_at, encryption_salt)
-  VALUES (@id, @password_hash, @original_filename, @file_size, @created_at, @expires_at, @encryption_salt)
+  INSERT INTO pages (id, password_hash, original_filename, file_size, created_at, expires_at, encryption_salt, user_id, page_password)
+  VALUES (@id, @password_hash, @original_filename, @file_size, @created_at, @expires_at, @encryption_salt, @user_id, @page_password)
 `);
 
 const getStmt = db.prepare(`
@@ -95,6 +124,23 @@ const listVotedByIpStmt = db.prepare(`
   SELECT item_id FROM feedback_votes WHERE ip_hash = ?
 `);
 
+// User statements
+const insertUserStmt = db.prepare(`INSERT INTO users (id, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`);
+const getUserByEmailStmt = db.prepare(`SELECT * FROM users WHERE email = ?`);
+const getUserByIdStmt = db.prepare(`SELECT * FROM users WHERE id = ?`);
+const updateUserStripeStmt = db.prepare(`UPDATE users SET stripe_customer_id = ?, subscription_status = ?, updated_at = ? WHERE id = ?`);
+const updateSubscriptionStatusStmt = db.prepare(`UPDATE users SET subscription_status = ?, updated_at = ? WHERE id = ?`);
+const getUserByStripeCustomerStmt = db.prepare(`SELECT * FROM users WHERE stripe_customer_id = ?`);
+
+// Stripe webhook idempotency statements
+const getStripeEventStmt = db.prepare(`SELECT id FROM stripe_events WHERE id = ?`);
+const insertStripeEventStmt = db.prepare(`INSERT INTO stripe_events (id, type, processed_at) VALUES (?, ?, ?)`);
+
+// Dashboard page statements
+const getPagesByUserStmt = db.prepare(`SELECT id, original_filename, file_size, created_at, expires_at, page_password FROM pages WHERE user_id = ? ORDER BY created_at DESC`);
+const deletePageByUserStmt = db.prepare(`DELETE FROM pages WHERE id = ? AND user_id = ?`);
+const expireUserPagesStmt = db.prepare(`UPDATE pages SET expires_at = ?, page_password = NULL WHERE user_id = ?`);
+
 
 module.exports = {
   insertPage(page) {
@@ -138,5 +184,42 @@ module.exports = {
   deleteFeedback(id) {
     deleteFeedbackVotesStmt.run(id);
     return deleteFeedbackStmt.run(id);
+  },
+
+  // User methods
+  insertUser(id, email, passwordHash) {
+    const now = new Date().toISOString();
+    return insertUserStmt.run(id, email, passwordHash, now, now);
+  },
+  getUserByEmail(email) {
+    return getUserByEmailStmt.get(email);
+  },
+  getUserById(id) {
+    return getUserByIdStmt.get(id);
+  },
+  updateUserStripe(id, stripeCustomerId, subscriptionStatus) {
+    return updateUserStripeStmt.run(stripeCustomerId, subscriptionStatus, new Date().toISOString(), id);
+  },
+  updateSubscriptionStatus(id, status) {
+    return updateSubscriptionStatusStmt.run(status, new Date().toISOString(), id);
+  },
+  getUserByStripeCustomer(stripeCustomerId) {
+    return getUserByStripeCustomerStmt.get(stripeCustomerId);
+  },
+  hasProcessedStripeEvent(eventId) {
+    return !!getStripeEventStmt.get(eventId);
+  },
+  markStripeEventProcessed(eventId, type) {
+    return insertStripeEventStmt.run(eventId, type, new Date().toISOString());
+  },
+  getPagesByUser(userId) {
+    return getPagesByUserStmt.all(userId);
+  },
+  deletePageByUser(pageId, userId) {
+    return deletePageByUserStmt.run(pageId, userId);
+  },
+  expireUserPages(userId) {
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    return expireUserPagesStmt.run(expiresAt, userId);
   },
 };

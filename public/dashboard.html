@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — PageGate</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <div class="dash-header">
+        <a href="/" class="logo">PageGate</a>
+        <div class="dash-header-right">
+          <span class="dash-email" id="userEmail"></span>
+          <button class="btn-text" id="logoutBtn">Log out</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Subscription Banner -->
+    <section class="sub-banner" id="subBanner">
+      <div class="sub-banner-content" id="subBannerContent"></div>
+    </section>
+
+    <!-- Pages List -->
+    <section>
+      <div class="section-header">
+        <h2>My Pages</h2>
+        <a href="/" class="btn-text" style="color: var(--accent);">+ Upload new</a>
+      </div>
+      <div id="pagesList" class="pages-list">
+        <p class="dash-empty" id="emptyState">No pages yet. <a href="/">Upload your first page</a></p>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    let currentUser = null;
+
+    async function init() {
+      const res = await fetch('/api/auth/me');
+      const data = await res.json();
+      if (data.proEnabled === false) {
+        document.getElementById('userEmail').textContent = '';
+        document.getElementById('subBannerContent').innerHTML = `
+          <div class="sub-promo">
+            <strong>Pro is not enabled on this deployment.</strong>
+            <span>Uploads still work, but accounts, billing, and dashboards are unavailable.</span>
+          </div>
+        `;
+        document.querySelector('section:not(#subBanner)').classList.add('hidden');
+        return;
+      }
+      if (!data.user) {
+        window.location.href = '/login.html';
+        return;
+      }
+      currentUser = data.user;
+      document.getElementById('userEmail').textContent = currentUser.email;
+      renderSubBanner();
+      if (currentUser.subscriptionStatus === 'active') {
+        loadPages();
+      } else {
+        document.querySelector('section:not(#subBanner)').classList.add('hidden');
+      }
+    }
+
+    function renderSubBanner() {
+      const banner = document.getElementById('subBannerContent');
+      if (currentUser.subscriptionStatus === 'active') {
+        banner.innerHTML = `
+          <div class="sub-active">
+            <span class="sub-badge">Pro</span>
+            <span>Your pages never expire and passwords are retrievable.</span>
+          </div>
+          <button class="btn-secondary btn-sm" id="manageSubBtn">Manage subscription</button>
+        `;
+        document.getElementById('manageSubBtn').addEventListener('click', async () => {
+          const res = await fetch('/api/stripe/portal', { method: 'POST' });
+          const data = await res.json();
+          if (data.url) window.location.href = data.url;
+        });
+      } else {
+        banner.innerHTML = `
+          <div class="sub-promo">
+            <strong>Upgrade to Pro — $3/mo</strong>
+            <span>Password retrieval, page dashboard, and pages that never expire.</span>
+          </div>
+          <button class="btn-primary btn-sm" id="upgradeBtn">Upgrade</button>
+        `;
+        document.getElementById('upgradeBtn').addEventListener('click', async () => {
+          const btn = document.getElementById('upgradeBtn');
+          btn.disabled = true;
+          btn.textContent = 'Redirecting...';
+          const res = await fetch('/api/stripe/checkout', { method: 'POST' });
+          const data = await res.json();
+          if (data.url) window.location.href = data.url;
+          else { btn.disabled = false; btn.textContent = 'Upgrade'; }
+        });
+      }
+    }
+
+    async function loadPages() {
+      const res = await fetch('/api/pages');
+      if (res.status === 403) {
+        document.querySelector('section:not(#subBanner)').classList.add('hidden');
+        return;
+      }
+      const pages = await res.json();
+      const list = document.getElementById('pagesList');
+      const empty = document.getElementById('emptyState');
+
+      if (pages.length === 0) {
+        empty.style.display = '';
+        return;
+      }
+      empty.style.display = 'none';
+
+      const now = new Date();
+      list.innerHTML = pages.map(page => {
+        const expires = new Date(page.expiresAt);
+        const neverExpires = expires.getFullYear() >= 9999;
+        const daysLeft = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
+        const isExpired = !neverExpires && daysLeft <= 0;
+
+        let expiryText;
+        if (neverExpires) {
+          expiryText = '<span class="dash-never">Never expires</span>';
+        } else if (isExpired) {
+          expiryText = '<span class="expired">Expired</span>';
+        } else {
+          expiryText = `${daysLeft} day${daysLeft === 1 ? '' : 's'} left`;
+        }
+
+        const created = new Date(page.createdAt).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric',
+        });
+
+        const passwordHtml = page.pagePassword
+          ? `<button class="btn-icon btn-icon--pw" data-pw="${escapeAttr(page.pagePassword)}" title="Show password">Password</button>`
+          : '';
+
+        return `
+          <div class="history-item">
+            <div class="history-item-info">
+              <div class="history-item-name">${escapeHtml(page.filename)}</div>
+              <div class="history-item-meta">${created} &middot; ${expiryText}</div>
+            </div>
+            <div class="history-item-actions">
+              ${passwordHtml}
+              <button class="btn-icon btn-icon--copy" data-url="${location.origin}/${page.id}" title="Copy link">Copy</button>
+              <button class="btn-icon btn-icon--open" data-url="${location.origin}/${page.id}" title="Open page">Open</button>
+              <button class="btn-icon btn-icon--delete" data-id="${page.id}" title="Delete">&times;</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    document.getElementById('pagesList').addEventListener('click', async (e) => {
+      const btn = e.target.closest('.btn-icon');
+      if (!btn) return;
+
+      if (btn.classList.contains('btn-icon--copy')) {
+        try {
+          await navigator.clipboard.writeText(btn.dataset.url);
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+        } catch { /* ignore */ }
+      } else if (btn.classList.contains('btn-icon--open')) {
+        window.open(btn.dataset.url, '_blank');
+      } else if (btn.classList.contains('btn-icon--pw')) {
+        const pw = btn.dataset.pw;
+        try {
+          await navigator.clipboard.writeText(pw);
+          btn.textContent = 'Copied!';
+          btn.classList.add('copied');
+          setTimeout(() => { btn.textContent = 'Password'; btn.classList.remove('copied'); }, 1500);
+        } catch {
+          prompt('Page password:', pw);
+        }
+      } else if (btn.classList.contains('btn-icon--delete')) {
+        if (!confirm('Delete this page? This cannot be undone.')) return;
+        const res = await fetch(`/api/pages/${btn.dataset.id}`, { method: 'DELETE' });
+        if (res.ok) loadPages();
+      }
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/';
+    });
+
+    function escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    function escapeAttr(str) {
+      return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,4 +1,44 @@
 (() => {
+  // Auth state
+  let currentUser = null;
+  const authBar = document.getElementById('authBar');
+
+  function renderAuthBar() {
+    if (!authBar) return;
+    if (currentUser === false) {
+      authBar.innerHTML = '';
+      return;
+    }
+    if (currentUser) {
+      const isPro = currentUser.subscriptionStatus === 'active';
+      const proLabel = isPro ? '<span class="sub-badge">Pro</span> ' : '';
+      const proLink = isPro
+        ? '<a href="/dashboard.html" class="auth-bar-link">Dashboard</a>'
+        : '<a href="/dashboard.html" class="auth-bar-link">Upgrade</a>';
+      authBar.innerHTML = `
+        ${proLabel}${proLink}
+        <span class="auth-bar-sep">&middot;</span>
+        <button class="auth-bar-btn" id="authLogoutBtn">Log out</button>
+      `;
+      document.getElementById('authLogoutBtn').addEventListener('click', async () => {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        currentUser = null;
+        renderAuthBar();
+      });
+    } else {
+      authBar.innerHTML = `
+        <a href="/login.html" class="auth-bar-link">Log in</a>
+        <span class="auth-bar-sep">&middot;</span>
+        <a href="/register.html" class="auth-bar-link">Sign up</a>
+      `;
+    }
+  }
+
+  fetch('/api/auth/me').then(r => r.json()).then(data => {
+    currentUser = data.proEnabled === false ? false : data.user;
+    renderAuthBar();
+  }).catch(() => {});
+
   // Elements
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
@@ -164,14 +204,19 @@
 
       // Format expiration date
       const expDate = new Date(data.expiresAt);
-      const expStr = expDate.toLocaleDateString('en-US', {
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      });
+      const neverExpires = expDate.getFullYear() >= 9999;
 
       linkOutput.value = data.url;
-      expirationNote.textContent = `Expires ${expStr}`;
+      if (neverExpires) {
+        expirationNote.textContent = 'This page never expires';
+      } else {
+        const expStr = expDate.toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+        });
+        expirationNote.textContent = `Expires ${expStr}`;
+      }
       resultSection.classList.remove('hidden');
       passwordSection.classList.add('hidden');
 

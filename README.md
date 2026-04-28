@@ -85,6 +85,13 @@ npm start
 | `BASE_URL` | _(auto-detected)_ | Public URL for link generation (e.g. `https://pagegate.app`) |
 | `DATA_DIR` | `./data` | SQLite database directory |
 | `UPLOADS_DIR` | `./uploads` | Encrypted file storage directory |
+| `PRO_ENABLED` | `false` | Enables accounts, Stripe billing, and the Pro dashboard. Set to `true` only when the required Pro variables below are configured. |
+| `SESSION_SECRET` | _(required when Pro is enabled)_ | Secret used to sign account sessions |
+| `STRIPE_SECRET_KEY` | _(required when Pro is enabled)_ | Stripe secret API key |
+| `STRIPE_WEBHOOK_SECRET` | _(required when Pro is enabled)_ | Stripe webhook signing secret |
+| `STRIPE_PRICE_ID` | _(required when Pro is enabled)_ | Stripe recurring price ID for the Pro plan |
+
+When `PRO_ENABLED` is not `true`, PageGate runs in free mode: uploads still work, but account, billing, password retrieval, and dashboard APIs are disabled. When `PRO_ENABLED=true`, the server validates the required Pro variables at startup and exits before serving traffic if any are missing.
 
 ## Analytics events (Plausible)
 
