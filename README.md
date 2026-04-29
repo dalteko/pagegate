@@ -57,7 +57,7 @@ Password-protected HTML page sharing. Upload an HTML file, set a password, get a
 
 Upload an HTML file with a password.
 
-- **Body:** `multipart/form-data` with `file` (.html, max 5MB) and `password`
+- **Body:** `multipart/form-data` with `file` (.html, max 10MB — see `server/tiers.js`) and `password`
 - **Response:** `{ pageId, url, expiresAt }`
 
 ### `POST /api/verify/:pageId`
