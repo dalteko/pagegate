@@ -52,9 +52,30 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS stripe_events (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
-    processed_at TEXT NOT NULL
+    claimed_at TEXT NOT NULL,
+    processed_at TEXT,
+    last_error TEXT
   )
 `);
+try {
+  db.exec(`ALTER TABLE stripe_events ADD COLUMN claimed_at TEXT`);
+} catch (e) {
+  // Column already exists — ignore
+}
+try {
+  db.exec(`ALTER TABLE stripe_events ADD COLUMN last_error TEXT`);
+} catch (e) {
+  // Column already exists — ignore
+}
+try {
+  db.exec(`
+    UPDATE stripe_events
+    SET claimed_at = COALESCE(NULLIF(claimed_at, ''), NULLIF(processed_at, ''), datetime('now'))
+    WHERE claimed_at IS NULL OR claimed_at = ''
+  `);
+} catch (e) {
+  // Best-effort migration for local databases that ran an earlier PR revision.
+}
 
 // === Pro tier tables ===
 db.exec(`
@@ -147,7 +168,23 @@ const updateUserProStmt = db.prepare(`
   UPDATE users SET is_pro = ?, stripe_customer_id = ?, stripe_subscription_id = ?, pro_expires_at = ? WHERE clerk_id = ?
 `);
 const getUserByStripeCustomerStmt = db.prepare(`SELECT * FROM users WHERE stripe_customer_id = ?`);
-const insertStripeEventStmt = db.prepare(`INSERT OR IGNORE INTO stripe_events (id, type, processed_at) VALUES (?, ?, ?)`);
+const insertStripeEventStmt = db.prepare(`
+  INSERT OR IGNORE INTO stripe_events (id, type, claimed_at, processed_at, last_error)
+  VALUES (?, ?, ?, '', NULL)
+`);
+const reclaimStripeEventStmt = db.prepare(`
+  UPDATE stripe_events
+  SET type = ?, claimed_at = ?, last_error = NULL
+  WHERE id = ?
+    AND (processed_at IS NULL OR processed_at = '')
+    AND claimed_at < ?
+`);
+const markStripeEventProcessedStmt = db.prepare(`
+  UPDATE stripe_events SET processed_at = ?, last_error = NULL WHERE id = ?
+`);
+const releaseStripeEventStmt = db.prepare(`
+  DELETE FROM stripe_events WHERE id = ? AND (processed_at IS NULL OR processed_at = '')
+`);
 const getUserPagesStmt = db.prepare(`
   SELECT id, original_filename, file_size, slug, created_at, expires_at FROM pages WHERE user_id = ? ORDER BY created_at DESC
 `);
@@ -177,6 +214,17 @@ const insertPageAtomicFn = db.transaction((page) => {
   if (page.slug) {
     setPageSlugStmt.run(page.slug, page.id);
   }
+});
+
+const STRIPE_EVENT_CLAIM_TTL = 10 * 60 * 1000;
+const claimStripeEventFn = db.transaction((eventId, type) => {
+  const now = new Date();
+  const claimedAt = now.toISOString();
+  const inserted = insertStripeEventStmt.run(eventId, type, claimedAt);
+  if (inserted.changes > 0) return true;
+
+  const staleBefore = new Date(now.getTime() - STRIPE_EVENT_CLAIM_TTL).toISOString();
+  return reclaimStripeEventStmt.run(type, claimedAt, eventId, staleBefore).changes > 0;
 });
 
 module.exports = {
@@ -244,7 +292,13 @@ module.exports = {
     return getUserByStripeCustomerStmt.get(stripeCustomerId);
   },
   claimStripeEvent(eventId, type) {
-    return insertStripeEventStmt.run(eventId, type, new Date().toISOString()).changes > 0;
+    return claimStripeEventFn(eventId, type);
+  },
+  markStripeEventProcessed(eventId) {
+    return markStripeEventProcessedStmt.run(new Date().toISOString(), eventId);
+  },
+  releaseStripeEvent(eventId) {
+    return releaseStripeEventStmt.run(eventId);
   },
   getUserPages(clerkId) {
     return getUserPagesStmt.all(clerkId);

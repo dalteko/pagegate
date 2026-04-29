@@ -38,54 +38,61 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     return res.json({ received: true, skipped: true });
   }
 
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      const session = event.data.object;
-      const clerkId = session.metadata?.clerk_id;
-      if (clerkId) {
-        db.updateUserPro(clerkId, {
-          isPro: true,
-          stripeCustomerId: session.customer,
-          stripeSubscriptionId: session.subscription,
-          proExpiresAt: null,
-        });
-        console.log(`User ${clerkId} upgraded to Pro`);
+  try {
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object;
+        const clerkId = session.metadata?.clerk_id;
+        if (clerkId) {
+          db.updateUserPro(clerkId, {
+            isPro: true,
+            stripeCustomerId: session.customer,
+            stripeSubscriptionId: session.subscription,
+            proExpiresAt: null,
+          });
+          console.log(`User ${clerkId} upgraded to Pro`);
+        }
+        break;
       }
-      break;
-    }
-    case 'customer.subscription.deleted': {
-      const sub = event.data.object;
-      const user = db.getUserByStripeCustomer(sub.customer);
-      if (user) {
-        // Grace period: 30 days from cancellation
-        const grace = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-        db.updateUserPro(user.clerk_id, {
-          isPro: false,
-          stripeCustomerId: user.stripe_customer_id,
-          stripeSubscriptionId: null,
-          proExpiresAt: grace,
-        });
-        console.log(`User ${user.clerk_id} subscription cancelled, grace until ${grace}`);
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object;
+        const user = db.getUserByStripeCustomer(sub.customer);
+        if (user) {
+          // Grace period: 30 days from cancellation
+          const grace = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          db.updateUserPro(user.clerk_id, {
+            isPro: false,
+            stripeCustomerId: user.stripe_customer_id,
+            stripeSubscriptionId: null,
+            proExpiresAt: grace,
+          });
+          console.log(`User ${user.clerk_id} subscription cancelled, grace until ${grace}`);
+        }
+        break;
       }
-      break;
-    }
-    case 'customer.subscription.updated': {
-      const sub = event.data.object;
-      const user = db.getUserByStripeCustomer(sub.customer);
-      if (user) {
-        const isActive = sub.status === 'active' || sub.status === 'trialing' || sub.status === 'past_due';
-        db.updateUserPro(user.clerk_id, {
-          isPro: isActive,
-          stripeCustomerId: user.stripe_customer_id,
-          stripeSubscriptionId: sub.id,
-          proExpiresAt: isActive ? null : user.pro_expires_at,
-        });
+      case 'customer.subscription.updated': {
+        const sub = event.data.object;
+        const user = db.getUserByStripeCustomer(sub.customer);
+        if (user) {
+          const isActive = sub.status === 'active' || sub.status === 'trialing' || sub.status === 'past_due';
+          db.updateUserPro(user.clerk_id, {
+            isPro: isActive,
+            stripeCustomerId: user.stripe_customer_id,
+            stripeSubscriptionId: sub.id,
+            proExpiresAt: isActive ? null : user.pro_expires_at,
+          });
+        }
+        break;
       }
-      break;
     }
-  }
 
-  res.json({ received: true });
+    db.markStripeEventProcessed(event.id);
+    res.json({ received: true });
+  } catch (err) {
+    db.releaseStripeEvent(event.id);
+    console.error('Stripe webhook processing failed:', err);
+    res.status(500).json({ error: 'Webhook processing failed' });
+  }
 });
 
 // Middleware
