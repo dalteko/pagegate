@@ -34,7 +34,7 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     return res.status(400).json({ error: 'Invalid signature' });
   }
 
-  if (db.hasProcessedStripeEvent(event.id)) {
+  if (!db.claimStripeEvent(event.id, event.type)) {
     return res.json({ received: true, skipped: true });
   }
 
@@ -85,7 +85,6 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     }
   }
 
-  db.markStripeEventProcessed(event.id, event.type);
   res.json({ received: true });
 });
 
