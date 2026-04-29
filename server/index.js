@@ -222,17 +222,10 @@ const verifyLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Slug validation: lowercase, hyphens, no special chars, min 3 chars
-const SLUG_REGEX = /^[a-z0-9][a-z0-9-]{1,}[a-z0-9]$/;
-const RESERVED_SLUGS = new Set(['admin', 'api', 'dashboard', 'privacy', 'terms', 'favicon', 'style', 'app']);
-
-function validateSlug(slug) {
-  if (!slug || slug.length < 3) return 'Slug must be at least 3 characters';
-  if (slug.length > 64) return 'Slug must be under 64 characters';
-  if (!SLUG_REGEX.test(slug)) return 'Slug must be lowercase letters, numbers, and hyphens only';
-  if (RESERVED_SLUGS.has(slug)) return 'This slug is reserved';
-  return null;
-}
+// Slug validation lives in tiers.js — this is just a thin alias for
+// readability at call sites. The spec rule is "3+ hyphenated word groups,
+// each ≥ 2 chars, lowercase alphanumeric, ≤ 60 chars total".
+const validateSlug = tiers.validateProSlug;
 
 // Expiration options for Pro users (in days, 0 = never)
 const EXPIRATION_OPTIONS = { '7': 7, '30': 30, '90': 90, '365': 365, 'never': 0 };
@@ -245,15 +238,17 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const confirmPassword = req.body.confirmPassword;
     const slug = req.body.slug?.trim().toLowerCase();
     const expiration = req.body.expiration;
+    const isPublic = req.body.isPublic === 'true' || req.body.isPublic === true;
+    const viewCapRaw = req.body.viewCap;
 
     if (!file) return res.status(400).json({ error: 'No file provided' });
-    if (!password || !password.trim()) return res.status(400).json({ error: 'Password is required' });
-    // Confirm-password is required for the anonymous flow (a typo otherwise
-    // creates a dead page since there's no recovery). Server-side check
-    // mirrors the client validation; backward-compatible for any caller
-    // that omits the field — only enforced when supplied.
-    if (confirmPassword !== undefined && confirmPassword !== password) {
-      return res.status(400).json({ error: 'Passwords do not match' });
+    // Public pages skip the password gate entirely. Password-protected
+    // pages still require it (and confirm-password if supplied).
+    if (!isPublic) {
+      if (!password || !password.trim()) return res.status(400).json({ error: 'Password is required' });
+      if (confirmPassword !== undefined && confirmPassword !== password) {
+        return res.status(400).json({ error: 'Passwords do not match' });
+      }
     }
 
     // Validate HTML file
@@ -270,6 +265,22 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const isPro = isUserPro(user);
     const tier = tiers.tierFor(user, { isProActive: isUserPro });
     const tierRule = tiers.RULES[tier];
+
+    // Pro-only fields. Returning 403 early so the user gets a precise
+    // error rather than something silently dropped.
+    if (isPublic && !tierRule.allowPublic) {
+      return res.status(403).json({ error: 'Public pages require Pro' });
+    }
+    let viewCapValue = null;
+    if (viewCapRaw !== undefined && viewCapRaw !== null && viewCapRaw !== '') {
+      if (!tierRule.viewCapConfigurable) {
+        return res.status(403).json({ error: 'Custom view caps require Pro' });
+      }
+      viewCapValue = parseInt(viewCapRaw, 10);
+      if (!Number.isFinite(viewCapValue) || viewCapValue < 1) {
+        return res.status(400).json({ error: 'View cap must be a positive integer' });
+      }
+    }
 
     // Per-tier link cap. Tier 1 = unlimited (rule is null). Tier 2 = 3,
     // Tier 3 = 100. Cannot delete on Tier 2 by design — user must wait
@@ -315,7 +326,10 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     }
 
     const pageId = crypto.randomBytes(6).toString('base64url').slice(0, 8);
-    const passwordHash = await bcrypt.hash(password.trim(), 10);
+    // Public pages still get a non-null password_hash (the column is NOT
+    // NULL) — empty string is a sentinel that the verify route will never
+    // reach since is_public short-circuits the bcrypt check.
+    const passwordHash = isPublic ? '' : await bcrypt.hash(password.trim(), 10);
 
     // Pick the crypto path by tier (see crypto.js header for the why).
     // Anonymous → password-derived (zero-knowledge). Account/Pro →
@@ -336,6 +350,13 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     }
     storage.savePageBlob(pageId, blob);
 
+    // Per-link view cap. Pro: user-set, falling back to viewCapDefault
+    // (1,000) so analytics work out of the box. Other tiers: leave null
+    // and let the read-time tier-rule lookup handle it.
+    const viewCapPersisted = tier === tiers.TIER.PRO
+      ? (viewCapValue ?? tierRule.viewCapDefault)
+      : null;
+
     try {
       db.insertPageAtomic({
         id: pageId,
@@ -349,6 +370,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         tier_at_creation: tier,
         user_id: userId || null,
         slug: slug || null,
+        is_public: isPublic,
+        view_cap: viewCapPersisted,
       });
     } catch (err) {
       // Clean up the encrypted file since DB insert failed
@@ -369,21 +392,25 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// POST /api/verify/:pageId — verify password and return HTML (supports pageId or slug)
+// POST /api/verify/:pageId — verify password and return HTML (supports pageId or slug).
+// For public pages (Pro feature), the password gate is skipped — the route
+// still runs view-cap enforcement and increments the view count, since
+// those apply uniformly to all unlocks.
 app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
   try {
     const { pageId } = req.params;
     const { password } = req.body;
-
-    if (!password) return res.status(400).json({ error: 'Password is required' });
 
     // Try by ID first, then by slug
     let page = db.getPage(pageId);
     if (!page) page = db.getPageBySlug(pageId);
     if (!page) return res.status(404).json({ error: 'Page not found or expired' });
 
-    const match = await bcrypt.compare(password, page.password_hash);
-    if (!match) return res.status(401).json({ error: 'Wrong password' });
+    if (!page.is_public) {
+      if (!password) return res.status(400).json({ error: 'Password is required' });
+      const match = await bcrypt.compare(password, page.password_hash);
+      if (!match) return res.status(401).json({ error: 'Wrong password' });
+    }
 
     // View-cap enforcement. The per-page `view_cap` column wins if set
     // (Pro custom caps); otherwise fall back to the tier rule. A null cap
@@ -706,26 +733,52 @@ app.get('/dashboard', (req, res) => {
   }
 });
 
-// GET /:slug — serve view.html for password prompt (supports both pageId and custom slugs)
+// GET /:slug — serve view.html for the password prompt. Looks up the
+// page so it can SSR-inject metadata (is_public, hide_footer) into the
+// HTML — view.html reads this to auto-unlock public pages and hide the
+// "Hosted on PageGate" footer for Pro pages.
+//
+// Slug regex here is intentionally lenient (matches any plausible slug
+// shape), even looser than tiers.PRO_SLUG_REGEX, so older slugs created
+// before the spec tightening still resolve.
+const VIEW_TEMPLATE_PATH = path.join(publicDir, 'view.html');
+let viewTemplate = null;
+function renderViewHtml(page) {
+  if (!viewTemplate) viewTemplate = fs.readFileSync(VIEW_TEMPLATE_PATH, 'utf-8');
+  const tier = page?.tier_at_creation || tiers.TIER.ANONYMOUS;
+  const meta = {
+    isPublic: !!page?.is_public,
+    hideFooter: !!tiers.RULES[tier].footerHidden,
+  };
+  // JSON.stringify is safe inside a JSON-typed script tag; no HTML
+  // escaping needed because the parser treats the contents as opaque.
+  return viewTemplate.replace('"__PAGE_META__"', JSON.stringify(meta));
+}
+
 app.get('/:pageIdOrSlug', (req, res) => {
   const param = req.params.pageIdOrSlug;
+  let page = null;
 
   // Match 8-char nanoid IDs
   if (/^[A-Za-z0-9_-]{8}$/.test(param)) {
-    res.set('X-Frame-Options', 'DENY');
-    return res.sendFile(path.join(publicDir, 'view.html'));
+    page = db.getPage(param);
+  } else if (/^[a-z0-9][a-z0-9-]+[a-z0-9]$/.test(param)) {
+    page = db.getPageBySlug(param);
   }
 
-  // Match custom slugs (lowercase, hyphens, 3+ chars)
-  if (/^[a-z0-9][a-z0-9-]+[a-z0-9]$/.test(param)) {
-    const page = db.getPageBySlug(param);
-    if (page) {
+  if (!page) {
+    // Fall through: no DB hit. Still serve view.html so the password
+    // prompt can show the standard "no longer available" copy on its
+    // first verify attempt (consistent with the pre-Phase-4 behavior).
+    if (/^[A-Za-z0-9_-]{8}$/.test(param)) {
       res.set('X-Frame-Options', 'DENY');
-      return res.sendFile(path.join(publicDir, 'view.html'));
+      return res.type('html').send(renderViewHtml(null));
     }
+    return res.status(404).send('Not found');
   }
 
-  res.status(404).send('Not found');
+  res.set('X-Frame-Options', 'DENY');
+  res.type('html').send(renderViewHtml(page));
 });
 
 // Cleanup: delete expired pages from disk + DB on startup and every 24h

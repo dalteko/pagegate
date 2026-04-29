@@ -124,9 +124,16 @@ function assertStatus(actual, expected, label) {
     assertStatus(r.status, 400, 'POST /api/upload (mismatched confirm)');
   });
 
-  await check('Visit uploaded page URL (password prompt loads)', async () => {
+  await check('Visit uploaded page URL (password prompt loads + meta injected)', async () => {
     const r = await fetch(`${base}/${pageId}`);
     assertStatus(r.status, 200, `GET /${pageId}`);
+    const html = await r.text();
+    if (html.includes('"__PAGE_META__"')) {
+      throw new Error('SSR meta placeholder was not replaced — view.html will fall back to defaults');
+    }
+    if (!/<script id="pageMeta"/i.test(html)) {
+      throw new Error('pageMeta script tag missing from view.html');
+    }
   });
 
   await check('Wrong password is rejected (401)', async () => {

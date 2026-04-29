@@ -17,6 +17,8 @@
   const slugInput = document.getElementById('slugInput');
   const slugHint = document.getElementById('slugHint');
   const expirationSelect = document.getElementById('expirationSelect');
+  const viewCapInput = document.getElementById('viewCapInput');
+  const isPublicInput = document.getElementById('isPublicInput');
   const dashBtn = document.getElementById('dashBtn');
 
   async function initClerk() {
@@ -283,15 +285,16 @@
   generateBtn.addEventListener('click', async () => {
     const password = passwordInput.value.trim();
     const confirmPassword = confirmPasswordInput?.value.trim();
-    if (!password) {
+    const wantsPublic = !!(currentUser?.isPro && isPublicInput?.checked);
+    // Public Pro pages skip the password gate; everyone else needs one.
+    if (!wantsPublic && !password) {
       passwordInput.style.borderColor = '#EF4444';
       passwordInput.focus();
       return;
     }
-    // Confirm-password is required for anonymous uploads since there's no
-    // recovery — a typo would create a dead page. We always require it
-    // client-side regardless of tier; the server enforces the same rule.
-    if (confirmPasswordInput && password !== confirmPassword) {
+    // Confirm-password mirrors the server check — only enforced when a
+    // password is in play.
+    if (!wantsPublic && confirmPasswordInput && password !== confirmPassword) {
       confirmPasswordInput.style.borderColor = '#EF4444';
       if (confirmHint) {
         confirmHint.textContent = 'Passwords do not match';
@@ -312,6 +315,7 @@
       formData.append('file', currentFile);
       formData.append('password', password);
       if (confirmPassword !== undefined) formData.append('confirmPassword', confirmPassword);
+      if (wantsPublic) formData.append('isPublic', 'true');
 
       // Add Pro fields if available
       if (currentUser?.isPro) {
@@ -319,6 +323,8 @@
         if (slug) formData.append('slug', slug);
         const expiration = expirationSelect?.value;
         if (expiration) formData.append('expiration', expiration);
+        const viewCap = viewCapInput?.value.trim();
+        if (viewCap) formData.append('viewCap', viewCap);
       }
 
       // Include auth header if signed in
@@ -412,6 +418,11 @@
     if (slugInput) slugInput.value = '';
     if (slugHint) { slugHint.textContent = ''; slugHint.className = 'field-hint'; }
     if (expirationSelect) expirationSelect.value = '30';
+    if (viewCapInput) viewCapInput.value = '';
+    if (isPublicInput) {
+      isPublicInput.checked = false;
+      applyPublicToggle();
+    }
     fileInfo.textContent = '';
     previewFrame.srcdoc = '';
     dropzone.style.display = '';
@@ -426,6 +437,22 @@
     pasteToggleBtn.classList.remove('hidden');
   }
 
+  // Public-page toggle hides the password+confirm inputs entirely. The
+  // server already enforces the same rule; this is just so the form
+  // doesn't ask for something that won't be used.
+  function applyPublicToggle() {
+    const publicMode = !!isPublicInput?.checked;
+    const passwordGroup = passwordInput?.closest('.input-group');
+    const confirmGroup = confirmPasswordInput?.closest('.input-group');
+    if (passwordGroup) passwordGroup.classList.toggle('hidden', publicMode);
+    if (confirmGroup) confirmGroup.classList.toggle('hidden', publicMode);
+    if (publicMode) {
+      passwordInput.value = '';
+      if (confirmPasswordInput) confirmPasswordInput.value = '';
+    }
+  }
+  isPublicInput?.addEventListener('change', applyPublicToggle);
+
   // Clear the mismatch hint as soon as the user edits either field.
   confirmPasswordInput?.addEventListener('input', () => {
     confirmPasswordInput.style.borderColor = '';
@@ -439,15 +466,19 @@
     if (confirmPasswordInput) confirmPasswordInput.style.borderColor = '';
   });
 
-  // Slug validation on input
+  // Slug validation — keep in sync with tiers.PRO_SLUG_REGEX on the server.
+  // Spec: 3+ hyphenated word groups, each ≥ 2 chars, lowercase alphanumeric,
+  // total ≤ 60 chars. Example: "kevins-landing-page".
+  const PRO_SLUG_REGEX = /^[a-z0-9]{2,}(-[a-z0-9]{2,}){2,}$/;
+  const PRO_SLUG_MAX_LEN = 60;
   slugInput?.addEventListener('input', () => {
     const val = slugInput.value.trim().toLowerCase();
     if (!val) { slugHint.textContent = ''; slugHint.className = 'field-hint'; return; }
-    if (val.length < 3) {
-      slugHint.textContent = 'At least 3 characters';
+    if (val.length > PRO_SLUG_MAX_LEN) {
+      slugHint.textContent = `Maximum ${PRO_SLUG_MAX_LEN} characters`;
       slugHint.className = 'field-hint field-hint--error';
-    } else if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(val)) {
-      slugHint.textContent = 'Lowercase letters, numbers, and hyphens only';
+    } else if (!PRO_SLUG_REGEX.test(val)) {
+      slugHint.textContent = 'Use 3+ word groups separated by hyphens, each at least 2 characters (e.g. my-landing-page)';
       slugHint.className = 'field-hint field-hint--error';
     } else {
       slugHint.textContent = '';
