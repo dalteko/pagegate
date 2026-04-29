@@ -719,6 +719,118 @@ app.post('/api/pages/:pageId/password/reset', async (req, res) => {
   }
 });
 
+// PATCH /api/pages/:pageId — Pro edit-in-place. Accepts a multipart body
+// so callers can send a new HTML file alongside metadata changes in one
+// request. All fields are optional; supply only what you want to change.
+//
+// Fields:
+//   file        — multipart file. Replaces the page HTML. Wrapped-key
+//                 pages only (legacy password-derived pages can't be
+//                 edited without their old password by design).
+//   slug        — new custom slug. Validated via tiers.validateProSlug
+//                 and uniqueness-checked.
+//   expiration  — option from EXPIRATION_OPTIONS. Recomputes expires_at
+//                 from now.
+//   isPublic    — 'true' / 'false'. Toggles password gating.
+//   viewCap     — positive integer or '' to clear (fall back to default).
+app.patch('/api/pages/:pageId', upload.single('file'), async (req, res) => {
+  try {
+    const auth = getRequiredProUser(req, res);
+    if (!auth) return;
+
+    const page = db.getPageById(req.params.pageId);
+    if (!page) return res.status(404).json({ error: 'Page not found' });
+    if (page.user_id !== auth.userId) return res.status(403).json({ error: 'Not your page' });
+    if (new Date(page.expires_at) < new Date()) {
+      return res.status(410).json({ error: 'Page has expired' });
+    }
+
+    const updates = {};
+
+    // --- HTML replacement ---
+    if (req.file) {
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      if (ext !== '.html' && ext !== '.htm') {
+        return res.status(400).json({ error: 'Only .html files are accepted' });
+      }
+      if (!page.wrapped_key) {
+        return res.status(400).json({
+          error: 'This page was created without a recoverable key. Editing requires uploading it under a new account/Pro page.',
+          reason: 'not_editable',
+        });
+      }
+      const html = storage.prepareHtml(req.file.buffer);
+      const pageKey = cryptoLib.unwrapPageKey(page.wrapped_key);
+      const blob = cryptoLib.encryptWithKey(html, pageKey);
+      storage.savePageBlob(page.id, blob);
+      db.updatePageFile(page.id, req.file.size, req.file.originalname);
+      updates.html = true;
+    }
+
+    // --- Slug ---
+    if (req.body.slug !== undefined) {
+      const next = req.body.slug ? String(req.body.slug).trim().toLowerCase() : null;
+      if (next === null || next === '') {
+        // Clear the slug — page falls back to its random ID.
+        db.setPageSlug(page.id, null);
+      } else if (next !== page.slug) {
+        const slugError = tiers.validateProSlug(next);
+        if (slugError) return res.status(400).json({ error: slugError });
+        const existing = db.getPageBySlug(next);
+        if (existing && existing.id !== page.id) {
+          return res.status(409).json({ error: 'This URL is already taken' });
+        }
+        db.setPageSlug(page.id, next);
+      }
+      updates.slug = next || null;
+    }
+
+    // --- Expiration ---
+    if (req.body.expiration !== undefined) {
+      const exp = String(req.body.expiration);
+      if (!(exp in EXPIRATION_OPTIONS)) return res.status(400).json({ error: 'Invalid expiration option' });
+      const days = EXPIRATION_OPTIONS[exp];
+      const next = days === 0
+        ? new Date('9999-12-31T23:59:59.999Z')
+        : new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+      db.updatePageExpiration(page.id, next.toISOString());
+      updates.expiresAt = next.toISOString();
+    }
+
+    // --- Public toggle ---
+    if (req.body.isPublic !== undefined) {
+      const wantsPublic = req.body.isPublic === 'true' || req.body.isPublic === true;
+      db.updatePageIsPublic(page.id, wantsPublic);
+      updates.isPublic = wantsPublic;
+    }
+
+    // --- View cap ---
+    if (req.body.viewCap !== undefined) {
+      const raw = String(req.body.viewCap).trim();
+      if (raw === '') {
+        // Empty string clears the cap → fall back to tier default at read time.
+        db.updatePageViewCap(page.id, null);
+        updates.viewCap = null;
+      } else {
+        const parsed = parseInt(raw, 10);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+          return res.status(400).json({ error: 'View cap must be a positive integer' });
+        }
+        db.updatePageViewCap(page.id, parsed);
+        updates.viewCap = parsed;
+      }
+    }
+
+    res.json({ ok: true, updates });
+  } catch (err) {
+    console.error('Page edit error:', err);
+    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE' || err.message?.includes('UNIQUE constraint failed')) {
+      return res.status(409).json({ error: 'This URL is already taken' });
+    }
+    res.status(500).json({ error: 'Edit failed' });
+  }
+});
+
 // GET /dashboard — serve dashboard page (with Clerk key injected)
 app.get('/dashboard', (req, res) => {
   const filePath = path.join(publicDir, 'dashboard.html');

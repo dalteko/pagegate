@@ -42,6 +42,54 @@
       <div class="dash-pages" id="dashPages"></div>
     </div>
 
+    <!-- Edit-in-place modal (Pro only). All fields optional — submit only what changed. -->
+    <div class="modal-overlay hidden" id="editModal">
+      <div class="modal-card">
+        <h3>Edit page</h3>
+        <p class="modal-note">All fields are optional. Leave anything blank to keep the current value.</p>
+        <div class="input-group">
+          <label for="editFileInput">Replace HTML</label>
+          <input type="file" id="editFileInput" accept=".html,.htm">
+          <p class="field-hint" id="editFileHint">Choose a new .html file to replace the page contents.</p>
+        </div>
+        <div class="input-group">
+          <label for="editSlugInput">Custom URL</label>
+          <div class="slug-input-wrapper">
+            <span class="slug-prefix">/</span>
+            <input type="text" id="editSlugInput" placeholder="my-landing-page" autocomplete="off">
+          </div>
+          <p class="field-hint" id="editSlugHint"></p>
+        </div>
+        <div class="input-group">
+          <label for="editExpirationSelect">Expiration</label>
+          <select id="editExpirationSelect" class="select-input">
+            <option value="">Keep current</option>
+            <option value="7">7 days from now</option>
+            <option value="30">30 days from now</option>
+            <option value="90">90 days from now</option>
+            <option value="365">1 year from now</option>
+            <option value="never">Never</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label for="editViewCapInput">View limit</label>
+          <input type="number" id="editViewCapInput" min="1" placeholder="1000" autocomplete="off">
+          <p class="field-hint">Leave blank to clear the cap.</p>
+        </div>
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="editIsPublicInput">
+            <span>Public page (no password)</span>
+          </label>
+        </div>
+        <p class="modal-error hidden" id="editModalError"></p>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="editCancelBtn" style="width:auto;padding:10px 20px;">Cancel</button>
+          <button class="btn-primary" id="editSaveBtn" style="width:auto;padding:10px 20px;">Save changes</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Password update modal — works in two modes:
          (a) reset (no old password needed) for wrapped-key pages, and
          (b) change (old password required) for legacy password-derived pages. -->
@@ -82,6 +130,20 @@
     const dashSignInBtn = document.getElementById('dashSignInBtn');
 
     const dashProBadge = document.getElementById('dashProBadge');
+
+    // Edit modal
+    const editModal = document.getElementById('editModal');
+    const editFileInput = document.getElementById('editFileInput');
+    const editSlugInput = document.getElementById('editSlugInput');
+    const editSlugHint = document.getElementById('editSlugHint');
+    const editExpirationSelect = document.getElementById('editExpirationSelect');
+    const editViewCapInput = document.getElementById('editViewCapInput');
+    const editIsPublicInput = document.getElementById('editIsPublicInput');
+    const editModalError = document.getElementById('editModalError');
+    const editCancelBtn = document.getElementById('editCancelBtn');
+    const editSaveBtn = document.getElementById('editSaveBtn');
+    let editingTargetId = null;
+
     const passwordModal = document.getElementById('passwordModal');
     const oldPasswordInput = document.getElementById('oldPasswordInput');
     const newPasswordInput = document.getElementById('newPasswordInput');
@@ -196,6 +258,17 @@
         const deleteBtn = page.canDelete
           ? `<button class="btn-icon btn-icon--delete" data-action="delete" data-id="${escapeAttr(page.id)}">Delete</button>`
           : '';
+        const editBtn = page.canEdit
+          ? `<button class="btn-icon" data-action="edit" data-id="${escapeAttr(page.id)}">Edit</button>`
+          : '';
+        // Stash the page payload on the row so the edit modal can prefill
+        // without a second fetch.
+        el.dataset.page = JSON.stringify({
+          id: page.id,
+          slug: page.slug,
+          isPublic: page.isPublic,
+          viewCap: page.viewCap,
+        });
 
         el.innerHTML = `
           <div class="dash-page-info">
@@ -215,6 +288,7 @@
           <div class="dash-page-actions">
             <button class="btn-icon" data-action="copy" data-slug="${escapeAttr(slug)}">Copy</button>
             <button class="btn-icon" data-action="open" data-slug="${escapeAttr(slug)}">Open</button>
+            ${editBtn}
             <button class="btn-icon" data-action="password" data-id="${escapeAttr(page.id)}" data-mode="${passwordMode}">${passwordLabel}</button>
             ${deleteBtn}
           </div>
@@ -239,6 +313,19 @@
         } catch { /* ignore */ }
       } else if (action === 'open') {
         window.open(btn.dataset.slug, '_blank');
+      } else if (action === 'edit') {
+        editingTargetId = btn.dataset.id;
+        const row = btn.closest('.dash-page-item');
+        const meta = row?.dataset.page ? JSON.parse(row.dataset.page) : {};
+        editFileInput.value = '';
+        editSlugInput.value = meta.slug || '';
+        editSlugHint.textContent = '';
+        editSlugHint.className = 'field-hint';
+        editExpirationSelect.value = '';
+        editViewCapInput.value = meta.viewCap != null ? String(meta.viewCap) : '';
+        editIsPublicInput.checked = !!meta.isPublic;
+        editModalError.classList.add('hidden');
+        editModal.classList.remove('hidden');
       } else if (action === 'password') {
         editingPageId = btn.dataset.id;
         editingMode = btn.dataset.mode === 'change' ? 'change' : 'reset';
@@ -321,6 +408,59 @@
 
     newPasswordInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') modalSaveBtn.click();
+    });
+
+    // === Edit modal ===
+    editCancelBtn.addEventListener('click', () => editModal.classList.add('hidden'));
+
+    // Inline slug validation, mirrors tiers.PRO_SLUG_REGEX from server.
+    const PRO_SLUG_REGEX_DASH = /^[a-z0-9]{2,}(-[a-z0-9]{2,}){2,}$/;
+    editSlugInput.addEventListener('input', () => {
+      const v = editSlugInput.value.trim().toLowerCase();
+      if (!v) { editSlugHint.textContent = ''; editSlugHint.className = 'field-hint'; return; }
+      if (v.length > 60 || !PRO_SLUG_REGEX_DASH.test(v)) {
+        editSlugHint.textContent = 'Use 3+ word groups, hyphenated, each 2+ chars (e.g. my-landing-page)';
+        editSlugHint.className = 'field-hint field-hint--error';
+      } else {
+        editSlugHint.textContent = '';
+        editSlugHint.className = 'field-hint';
+      }
+    });
+
+    editSaveBtn.addEventListener('click', async () => {
+      editModalError.classList.add('hidden');
+      const fd = new FormData();
+      // Only include fields the user actually changed. Empty string is a
+      // sentinel for "clear this field" on slug and viewCap; the server
+      // distinguishes undefined from empty.
+      if (editFileInput.files[0]) fd.append('file', editFileInput.files[0]);
+      fd.append('slug', editSlugInput.value.trim().toLowerCase());
+      if (editExpirationSelect.value) fd.append('expiration', editExpirationSelect.value);
+      fd.append('viewCap', editViewCapInput.value.trim());
+      fd.append('isPublic', editIsPublicInput.checked ? 'true' : 'false');
+
+      editSaveBtn.disabled = true;
+      try {
+        const token = await getToken();
+        const res = await fetch(`/api/pages/${editingTargetId}`, {
+          method: 'PATCH',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: fd,
+        });
+        if (res.ok) {
+          editModal.classList.add('hidden');
+          loadPages();
+        } else {
+          const data = await res.json();
+          editModalError.textContent = data.error || 'Failed';
+          editModalError.classList.remove('hidden');
+        }
+      } catch {
+        editModalError.textContent = 'Connection error';
+        editModalError.classList.remove('hidden');
+      } finally {
+        editSaveBtn.disabled = false;
+      }
     });
 
     function escapeHtml(str) {

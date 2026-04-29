@@ -260,6 +260,9 @@ const deletePageStmt = db.prepare(`DELETE FROM pages WHERE id = ?`);
 const getPageByIdOnlyStmt = db.prepare(`SELECT * FROM pages WHERE id = ?`);
 const updatePageExpirationStmt = db.prepare(`UPDATE pages SET expires_at = ? WHERE id = ?`);
 const updatePageEncryptionSaltStmt = db.prepare(`UPDATE pages SET encryption_salt = ? WHERE id = ?`);
+const updatePageIsPublicStmt = db.prepare(`UPDATE pages SET is_public = ? WHERE id = ?`);
+const updatePageViewCapStmt = db.prepare(`UPDATE pages SET view_cap = ? WHERE id = ?`);
+const updatePageFileSizeStmt = db.prepare(`UPDATE pages SET file_size = ?, original_filename = ? WHERE id = ?`);
 
 // Atomic insert with owner and slug in a single transaction.
 // New tier-related columns default to safe values when omitted so legacy
@@ -399,6 +402,15 @@ module.exports = {
   },
   updatePageEncryptionSalt(pageId, salt) {
     return updatePageEncryptionSaltStmt.run(salt, pageId);
+  },
+  updatePageIsPublic(pageId, isPublic) {
+    return updatePageIsPublicStmt.run(isPublic ? 1 : 0, pageId);
+  },
+  updatePageViewCap(pageId, viewCap) {
+    return updatePageViewCapStmt.run(viewCap, pageId);
+  },
+  updatePageFile(pageId, fileSize, originalFilename) {
+    return updatePageFileSizeStmt.run(fileSize, originalFilename, pageId);
   },
   insertPageAtomic(page) {
     return insertPageAtomicFn(page);
