@@ -188,6 +188,9 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     assertStatus(r.status, 200, `POST /api/verify/${pageId} (right pw)`);
     const j = await r.json();
     if (!j.html.includes('<h1>smoke</h1>')) throw new Error('decrypted HTML did not match what we uploaded');
+    const row = directDb.prepare('SELECT view_count, last_viewed_at FROM pages WHERE id = ?').get(pageId);
+    if (row.view_count !== 1) throw new Error(`expected view_count 1, got ${row.view_count}`);
+    if (!row.last_viewed_at) throw new Error('last_viewed_at was not recorded');
   });
 
   await check('Public pages bypass password-attempt limiter but still unlock', async () => {

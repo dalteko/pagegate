@@ -652,6 +652,7 @@ app.get('/api/pages', async (req, res) => {
       createdAt: p.created_at,
       expiresAt: p.expires_at,
       viewCount: p.view_count || 0,
+      lastViewedAt: p.last_viewed_at || null,
       viewCap: cap,
       // Raw DB value (null when no explicit cap). The edit modal uses this
       // to distinguish "no cap set" from "cap set to the tier default" —
@@ -999,10 +1000,9 @@ function cleanupExpired() {
 // Phase 5: enforce Tier 2 on users whose grace window has ended.
 //
 // Runs alongside cleanupExpired(). For each lapsed user:
-//   1. Pick survivors — user-flagged via /api/pages/:id/keep, falling
-//      back to most-recently-created (proxy for "most-recently-viewed"
-//      since we don't track view timestamps yet) until we reach the
-//      Tier-2 cap.
+//   1. Pick survivors — user-flagged via /api/pages/:id/keep first,
+//      then fill remaining slots by most-recently-viewed until we reach
+//      the Tier-2 cap.
 //   2. Public-only links don't survive — Tier 2 has no public pages.
 //      User had 30 days to convert them to password-protected.
 //   3. Survivors get their custom slug released, view_cap cleared,
@@ -1037,15 +1037,27 @@ function enforceLapsedGracePeriods() {
     const survivable = live.filter(p => !p.is_public);
     const publicPages = live.filter(p => p.is_public);
 
-    // Pick survivors from survivable pages: explicit selections first
-    // (trimmed by created_at DESC, which is how getUserPages orders).
-    let survivors = survivable.filter(p => p.kept_after_grace);
-    if (survivors.length === 0) {
-      survivors = survivable.slice(0, keepLimit);
-    } else if (survivors.length > keepLimit) {
-      survivors = survivors.slice(0, keepLimit);
+    // Pick survivors from survivable pages: explicit selections first,
+    // then fill any remaining slots by most-recently-viewed. Pages that
+    // have never been viewed fall back to created_at for deterministic
+    // ordering.
+    const recency = (p) => Date.parse(p.last_viewed_at || p.created_at || 0) || 0;
+    const byMostRecentlyViewed = (a, b) => recency(b) - recency(a);
+    const ordered = [...survivable].sort(byMostRecentlyViewed);
+    const survivors = [];
+    const keepIds = new Set();
+
+    for (const p of ordered.filter(p => p.kept_after_grace)) {
+      if (survivors.length >= keepLimit) break;
+      survivors.push(p);
+      keepIds.add(p.id);
     }
-    const keepIds = new Set(survivors.map(p => p.id));
+    for (const p of ordered) {
+      if (survivors.length >= keepLimit) break;
+      if (keepIds.has(p.id)) continue;
+      survivors.push(p);
+      keepIds.add(p.id);
+    }
 
     let deleted = 0;
     let demoted = 0;
