@@ -328,14 +328,18 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     }
 
     // Per-tier link cap. Tier 1 = unlimited (rule is null). Tier 2 = 3,
-    // Tier 3 = 100. Cannot delete on Tier 2 by design — user must wait
-    // for a page to expire. Archived pages (Phase 5 grace) don't count.
+    // Tier 3 = 100. Tier 2 cannot delete by design — must wait for expiry.
+    // Tier 3 (Pro) can delete from the dashboard, so the advice differs.
+    // Archived pages (Phase 5 grace) don't count.
     if (tierRule.maxLinks !== null && userId) {
       const active = db.countActiveUserPages(userId);
       if (active >= tierRule.maxLinks) {
-        const tierLabel = tierRule.label;
+        const linkWord = tierRule.maxLinks === 1 ? 'link' : 'links';
+        const advice = isPro
+          ? 'Delete a page or wait for one to expire before creating another.'
+          : 'Wait for one to expire before creating another.';
         return res.status(403).json({
-          error: `${tierLabel} is limited to ${tierRule.maxLinks} active link${tierRule.maxLinks === 1 ? '' : 's'}. Wait for one to expire before creating another.`,
+          error: `${tierRule.label} is limited to ${tierRule.maxLinks} active ${linkWord}. ${advice}`,
           reason: 'link_cap',
         });
       }
