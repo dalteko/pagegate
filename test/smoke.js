@@ -165,8 +165,25 @@ function assertStatus(actual, expected, label) {
   });
 
   await check('Unknown URL returns 404 (does not crash)', async () => {
-    const r = await fetch(`${base}/this-page-does-not-exist`);
-    assertStatus(r.status, 404, 'GET /this-page-does-not-exist');
+    // Use a path that doesn't match either the nanoid shape (8 chars, [A-Za-z0-9_-])
+    // or the slug shape (lowercase alphanumeric with hyphens). An uppercase
+    // letter rules out the slug regex; the length rules out nanoid. Both
+    // recognized shapes serve view.html so the verify route can render the
+    // "no longer available" card for expired pages — true garbage still 404s.
+    const r = await fetch(`${base}/This-Page-Does-Not-Exist`);
+    assertStatus(r.status, 404, 'GET /This-Page-Does-Not-Exist');
+  });
+
+  await check('Slug-shaped unknown URL serves view.html (expired-page UX)', async () => {
+    // Mirrors nanoid behavior: a slug-shaped miss serves view.html so the
+    // verify route can flip it into the expired card. Important for Pro
+    // slugs whose expired DB row has been cleaned up.
+    const r = await fetch(`${base}/maybe-an-old-slug`);
+    assertStatus(r.status, 200, 'GET /maybe-an-old-slug');
+    const body = await r.text();
+    if (!body.includes('__PAGE_META__') && !body.includes('isPublic')) {
+      throw new Error('Slug-shaped miss did not return view.html');
+    }
   });
 
   const failed = checks.filter((c) => !c.ok);

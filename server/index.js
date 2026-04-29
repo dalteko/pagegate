@@ -789,10 +789,15 @@ app.get('/:pageIdOrSlug', (req, res) => {
   if (!page && looksLikeSlug) page = db.getPageBySlug(param);
 
   if (!page) {
-    // Nanoid-shaped misses still serve view.html so the verify route can
-    // surface the standard "no longer available" copy — preserves the
-    // pre-Phase-4 behavior for expired or never-existed page IDs.
-    if (looksLikeNanoid) {
+    // Both nanoid- and slug-shaped misses serve view.html so the verify
+    // route can surface the standard "no longer available" copy. This
+    // matters for expired Pro slugs in particular — `getPageBySlug`
+    // filters by expiry, and after the nightly cleanup deletes the row
+    // there's no way to distinguish "expired" from "never existed", so
+    // we render the same expired-page UX either way (consistent with
+    // the long-standing nanoid behavior). True garbage (anything that
+    // doesn't match either shape) still 404s.
+    if (looksLikeNanoid || looksLikeSlug) {
       res.set('X-Frame-Options', 'DENY');
       return res.type('html').send(renderViewHtml(null));
     }
