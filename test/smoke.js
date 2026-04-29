@@ -19,7 +19,18 @@ const env = {
   DATA_DIR: path.join(tmpDir, 'data'),
   UPLOADS_DIR: path.join(tmpDir, 'uploads'),
   PRO_ENABLED: 'false',
+  PAGE_KEY_MASTER: '0000000000000000000000000000000000000000000000000000000000000000',
 };
+
+process.env.DATA_DIR = env.DATA_DIR;
+process.env.UPLOADS_DIR = env.UPLOADS_DIR;
+process.env.PAGE_KEY_MASTER = env.PAGE_KEY_MASTER;
+
+const Database = require('better-sqlite3');
+const db = require('../server/db');
+const storage = require('../server/storage');
+const cryptoLib = require('../server/crypto');
+const directDb = new Database(path.join(env.DATA_DIR, 'pagegate.db'));
 
 const child = spawn('node', ['server/index.js'], {
   env,
@@ -74,6 +85,29 @@ async function check(name, fn) {
 
 function assertStatus(actual, expected, label) {
   if (actual !== expected) throw new Error(`${label}: expected ${expected}, got ${actual}`);
+}
+
+function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
+  const now = new Date();
+  const pageKey = cryptoLib.generatePageKey();
+  const blob = cryptoLib.encryptWithKey(html, pageKey);
+  storage.savePageBlob(id, blob);
+  db.insertPageAtomic({
+    id,
+    password_hash: '',
+    original_filename: `${id}.html`,
+    file_size: Buffer.byteLength(html),
+    created_at: now.toISOString(),
+    expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    encryption_salt: null,
+    wrapped_key: cryptoLib.wrapPageKey(pageKey),
+    tier_at_creation: 3,
+    is_public: true,
+    view_cap: viewCap,
+  });
+  if (viewCount > 0) {
+    directDb.prepare('UPDATE pages SET view_count = ? WHERE id = ?').run(viewCount, id);
+  }
 }
 
 (async () => {
@@ -156,6 +190,45 @@ function assertStatus(actual, expected, label) {
     if (!j.html.includes('<h1>smoke</h1>')) throw new Error('decrypted HTML did not match what we uploaded');
   });
 
+  await check('Public pages bypass password-attempt limiter but still unlock', async () => {
+    const publicId = 'PubRate1';
+    insertPublicWrappedPage({
+      id: publicId,
+      html: '<!doctype html><h1>public rate</h1>',
+      viewCap: 20,
+    });
+    for (let i = 0; i < 11; i++) {
+      const r = await fetch(`${base}/api/verify/${publicId}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      assertStatus(r.status, 200, `public verify attempt ${i + 1}`);
+    }
+  });
+
+  await check('Pro pages with no explicit cap fall back to the 1,000-view default', async () => {
+    const publicId = 'PubCap01';
+    insertPublicWrappedPage({
+      id: publicId,
+      html: '<!doctype html><h1>public cap</h1>',
+      viewCap: null,
+      viewCount: 999,
+    });
+    const ok = await fetch(`${base}/api/verify/${publicId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assertStatus(ok.status, 200, 'public verify at 999 views');
+    const capped = await fetch(`${base}/api/verify/${publicId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assertStatus(capped.status, 410, 'public verify at default cap');
+  });
+
   await check('Stripe checkout route is wired up (no 5xx)', async () => {
     const r = await fetch(`${base}/api/checkout`, { method: 'POST' });
     if (r.status >= 500) {
@@ -165,8 +238,25 @@ function assertStatus(actual, expected, label) {
   });
 
   await check('Unknown URL returns 404 (does not crash)', async () => {
-    const r = await fetch(`${base}/this-page-does-not-exist`);
-    assertStatus(r.status, 404, 'GET /this-page-does-not-exist');
+    // Use a path that doesn't match either the nanoid shape (8 chars, [A-Za-z0-9_-])
+    // or the slug shape (lowercase alphanumeric with hyphens). An uppercase
+    // letter rules out the slug regex; the length rules out nanoid. Both
+    // recognized shapes serve view.html so the verify route can render the
+    // "no longer available" card for expired pages — true garbage still 404s.
+    const r = await fetch(`${base}/This-Page-Does-Not-Exist`);
+    assertStatus(r.status, 404, 'GET /This-Page-Does-Not-Exist');
+  });
+
+  await check('Slug-shaped unknown URL serves view.html (expired-page UX)', async () => {
+    // Mirrors nanoid behavior: a slug-shaped miss serves view.html so the
+    // verify route can flip it into the expired card. Important for Pro
+    // slugs whose expired DB row has been cleaned up.
+    const r = await fetch(`${base}/maybe-an-old-slug`);
+    assertStatus(r.status, 200, 'GET /maybe-an-old-slug');
+    const body = await r.text();
+    if (!body.includes('__PAGE_META__') && !body.includes('isPublic')) {
+      throw new Error('Slug-shaped miss did not return view.html');
+    }
   });
 
   const failed = checks.filter((c) => !c.ok);
