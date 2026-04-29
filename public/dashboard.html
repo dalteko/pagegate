@@ -133,11 +133,21 @@
     async function loadPages() {
       try {
         const token = await getToken();
-        // /api/me tells us whether to show the PRO badge — separate call
-        // so the dashboard renders even if /api/pages somehow fails.
-        const meRes = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
-        if (meRes.ok) {
-          const me = await meRes.json();
+        // POST /api/auth/sync (not GET /api/me) — a user who lands directly
+        // on /dashboard after sign-in won't have hit `/` yet, so the local
+        // users row may not exist. /api/me returns 404 in that case and
+        // /api/pages then fails the same way, leaving the dashboard empty.
+        // /api/auth/sync upserts the user row and returns the same isPro
+        // info we need for the badge.
+        const syncRes = await fetch('/api/auth/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (syncRes.ok) {
+          const me = await syncRes.json();
           if (me.isPro) dashProBadge.classList.remove('hidden');
           else dashProBadge.classList.add('hidden');
         }
