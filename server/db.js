@@ -40,6 +40,7 @@ try {
 //   tier_at_creation  — 1 (anonymous), 2 (account), 3 (Pro). Informational;
 //                       runtime crypto path is decided by `wrapped_key`.
 //   view_count        — incremented on each successful unlock.
+//   last_viewed_at    — timestamp of the most recent successful unlock.
 //   view_cap          — per-page cap. null = use the tier default at read time.
 //   is_public         — Pro-only: skip the password gate entirely.
 //   archived_at       — Phase 5 (Pro downgrade grace) hook; null = active.
@@ -47,6 +48,7 @@ for (const stmt of [
   `ALTER TABLE pages ADD COLUMN wrapped_key TEXT`,
   `ALTER TABLE pages ADD COLUMN tier_at_creation INTEGER`,
   `ALTER TABLE pages ADD COLUMN view_count INTEGER DEFAULT 0`,
+  `ALTER TABLE pages ADD COLUMN last_viewed_at TEXT`,
   `ALTER TABLE pages ADD COLUMN view_cap INTEGER`,
   `ALTER TABLE pages ADD COLUMN is_public INTEGER DEFAULT 0`,
   `ALTER TABLE pages ADD COLUMN archived_at TEXT`,
@@ -154,12 +156,14 @@ const insertStmt = db.prepare(`
   INSERT INTO pages (
     id, password_hash, original_filename, file_size,
     created_at, expires_at, encryption_salt,
-    wrapped_key, tier_at_creation, view_cap, is_public
+    wrapped_key, tier_at_creation, view_cap, is_public,
+    last_viewed_at, kept_after_grace
   )
   VALUES (
     @id, @password_hash, @original_filename, @file_size,
     @created_at, @expires_at, @encryption_salt,
-    @wrapped_key, @tier_at_creation, @view_cap, @is_public
+    @wrapped_key, @tier_at_creation, @view_cap, @is_public,
+    @last_viewed_at, @kept_after_grace
   )
 `);
 
@@ -172,7 +176,7 @@ const getStmt = db.prepare(`
 `);
 
 const incrementViewCountStmt = db.prepare(`
-  UPDATE pages SET view_count = view_count + 1 WHERE id = ?
+  UPDATE pages SET view_count = view_count + 1, last_viewed_at = ? WHERE id = ?
 `);
 
 const selectExpiredStmt = db.prepare(`
@@ -243,7 +247,7 @@ const releaseStripeEventStmt = db.prepare(`
 `);
 const getUserPagesStmt = db.prepare(`
   SELECT id, original_filename, file_size, slug, created_at, expires_at,
-         view_count, view_cap, is_public, tier_at_creation, archived_at,
+         view_count, last_viewed_at, view_cap, is_public, tier_at_creation, archived_at,
          wrapped_key, kept_after_grace
     FROM pages WHERE user_id = ? ORDER BY created_at DESC
 `);
@@ -297,6 +301,8 @@ const insertPageAtomicFn = db.transaction((page) => {
     tier_at_creation: page.tier_at_creation ?? null,
     view_cap: page.view_cap ?? null,
     is_public: page.is_public ? 1 : 0,
+    last_viewed_at: page.last_viewed_at ?? null,
+    kept_after_grace: page.kept_after_grace ? 1 : 0,
   });
   if (page.user_id) {
     setPageOwnerStmt.run(page.user_id, page.id);
@@ -319,7 +325,11 @@ const claimStripeEventFn = db.transaction((eventId, type) => {
 
 module.exports = {
   insertPage(page) {
-    return insertStmt.run(page);
+    return insertStmt.run({
+      last_viewed_at: null,
+      kept_after_grace: 0,
+      ...page,
+    });
   },
   getPage(id) {
     return getStmt.get(id, new Date().toISOString());
@@ -442,7 +452,7 @@ module.exports = {
     return insertPageAtomicFn(page);
   },
   incrementViewCount(pageId) {
-    return incrementViewCountStmt.run(pageId);
+    return incrementViewCountStmt.run(new Date().toISOString(), pageId);
   },
   updatePagePasswordAndSalt(pageId, passwordHash, salt) {
     return updatePagePasswordAndSaltStmt.run(passwordHash, salt, pageId);

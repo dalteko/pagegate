@@ -200,16 +200,33 @@ function getRequiredProUser(req, res) {
 // Any signed-in user — Tier 2 or Tier 3. Used by routes shared between
 // account and Pro (dashboard list, password reset). Distinct from
 // getRequiredProUser, which gates Pro-only features (delete, slug, etc.).
-function getRequiredAuthUser(req, res) {
+//
+// Async because we lazy-upsert the local users row from Clerk if it's
+// missing — same logic as `/api/auth/sync`. Without this, a freshly-
+// signed-in user who hits any of these routes before the dashboard's
+// auth-sync round trip lands gets a 404 (PR #10 fixed the equivalent
+// race for the dashboard's /api/me call by switching it to /api/auth/sync;
+// this closes the same gap on the server side so it's fixed once for
+// every route, not per-call site).
+async function getRequiredAuthUser(req, res) {
   const userId = getAuthUserId(req);
   if (!userId) {
     res.status(401).json({ error: 'Not signed in' });
     return null;
   }
-  const user = db.getUser(userId);
+  let user = db.getUser(userId);
   if (!user) {
-    res.status(404).json({ error: 'User not found' });
-    return null;
+    try {
+      const clerkUser = await clerkClient.users.getUser(userId);
+      const email = clerkUser.primaryEmailAddress?.emailAddress
+        || clerkUser.emailAddresses?.find((addr) => addr.id === clerkUser.primaryEmailAddressId)?.emailAddress
+        || null;
+      user = db.getOrCreateUser(userId, email);
+    } catch (err) {
+      console.error('Lazy user upsert failed:', err);
+      res.status(500).json({ error: 'Auth sync failed' });
+      return null;
+    }
   }
   return { userId, user };
 }
@@ -223,20 +240,37 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_BYTES },
 });
 
+function findLivePage(pageIdOrSlug) {
+  let page = db.getPage(pageIdOrSlug);
+  if (!page) page = db.getPageBySlug(pageIdOrSlug);
+  return page;
+}
+
+function effectiveViewCap(page) {
+  if (page.view_cap !== null && page.view_cap !== undefined) return page.view_cap;
+  const tierAtCreation = page.tier_at_creation || tiers.TIER.ANONYMOUS;
+  const rule = tiers.RULES[tierAtCreation];
+  return rule.viewCap ?? rule.viewCapDefault ?? null;
+}
+
 // Rate limiter for password verification: 10 attempts per IP per page per hour
 const verifyLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 10,
+  // Public Pro pages have no password to brute-force. They are still gated
+  // by the per-page view cap in the handler, but should not trip the
+  // password-attempt limiter on normal refreshes.
+  skip: (req) => !!findLivePage(req.params.pageId)?.is_public,
   keyGenerator: (req) => `${req.ip}-${req.params.pageId}`,
   message: { error: 'Too many attempts. Try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Slug validation lives in tiers.js — this is just a thin alias for
-// readability at call sites. The spec rule is "3+ hyphenated word groups,
-// each ≥ 2 chars, lowercase alphanumeric, ≤ 60 chars total".
-const validateSlug = tiers.validateProSlug;
+// Slug validation lives in tiers.js — call `tiers.validateProSlug`
+// directly so there's only ever one function in play. The spec rule is
+// "3+ hyphenated word groups, each ≥ 2 chars, lowercase alphanumeric,
+// ≤ 60 chars total".
 
 // Expiration options for Pro users (in days, 0 = never)
 const EXPIRATION_OPTIONS = { '7': 7, '30': 30, '90': 90, '365': 365, 'never': 0 };
@@ -310,7 +344,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     // Validate slug (Pro only)
     if (slug) {
       if (!isPro) return res.status(403).json({ error: 'Custom URLs require Pro' });
-      const slugError = validateSlug(slug);
+      const slugError = tiers.validateProSlug(slug);
       if (slugError) return res.status(400).json({ error: slugError });
       // Check uniqueness
       const existing = db.getPageBySlug(slug);
@@ -412,9 +446,7 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
     const { pageId } = req.params;
     const { password } = req.body;
 
-    // Try by ID first, then by slug
-    let page = db.getPage(pageId);
-    if (!page) page = db.getPageBySlug(pageId);
+    const page = findLivePage(pageId);
     if (!page) return res.status(404).json({ error: 'Page not found or expired' });
 
     if (!page.is_public) {
@@ -423,11 +455,10 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
       if (!match) return res.status(401).json({ error: 'Wrong password' });
     }
 
-    // View-cap enforcement. The per-page `view_cap` column wins if set
-    // (Pro custom caps); otherwise fall back to the tier rule. A null cap
+    // View-cap enforcement. The per-page `view_cap` column wins if set;
+    // otherwise fall back to the tier rule/default. A null effective cap
     // means unlimited.
-    const tierAtCreation = page.tier_at_creation || tiers.TIER.ANONYMOUS;
-    const cap = page.view_cap ?? tiers.RULES[tierAtCreation].viewCap;
+    const cap = effectiveViewCap(page);
     if (cap !== null && cap !== undefined && (page.view_count || 0) >= cap) {
       return res.status(410).json({ error: 'View limit reached', reason: 'view_cap' });
     }
@@ -604,15 +635,15 @@ app.post('/api/billing-portal', async (req, res) => {
 // delete by spec); password reset works for both.
 
 // GET /api/pages — list signed-in user's pages
-app.get('/api/pages', (req, res) => {
-  const auth = getRequiredAuthUser(req, res);
+app.get('/api/pages', async (req, res) => {
+  const auth = await getRequiredAuthUser(req, res);
   if (!auth) return;
 
   const isPro = isUserPro(auth.user);
   const pages = db.getUserPages(auth.userId);
   res.json(pages.map(p => {
     const tier = p.tier_at_creation || tiers.TIER.ANONYMOUS;
-    const cap = p.view_cap ?? tiers.RULES[tier].viewCap;
+    const cap = effectiveViewCap(p);
     return {
       id: p.id,
       filename: p.original_filename,
@@ -621,15 +652,23 @@ app.get('/api/pages', (req, res) => {
       createdAt: p.created_at,
       expiresAt: p.expires_at,
       viewCount: p.view_count || 0,
+      lastViewedAt: p.last_viewed_at || null,
       viewCap: cap,
+      // Raw DB value (null when no explicit cap). The edit modal uses this
+      // to distinguish "no cap set" from "cap set to the tier default" —
+      // a no-op save would otherwise pin the page to the current default.
+      viewCapExplicit: p.view_cap,
       isPublic: !!p.is_public,
       tier,
+      // Per-action capability flags so the dashboard can render the
+      // right buttons without duplicating tier rules. Public pages
+      // skip both — there's no password to change or reset on a page
+      // that has no password gate.
+      hasPassword: !p.is_public,
       // Whether this page supports server-side password reset. Pages
       // created on the password-derived path (legacy) cannot be reset
       // without the old password — the page key is derived from it.
-      passwordResettable: !!p.wrapped_key,
-      // Per-action capability flags so the dashboard can render the
-      // right buttons without duplicating tier logic.
+      passwordResettable: !!p.wrapped_key && !p.is_public,
       canDelete: isPro,
       canEdit: isPro,
       // Phase 5: user's grace-period selection. Only meaningful while
@@ -658,7 +697,7 @@ app.delete('/api/pages/:pageId', (req, res) => {
 // owner so this never reaches them.
 app.patch('/api/pages/:pageId/password', async (req, res) => {
   try {
-    const auth = getRequiredAuthUser(req, res);
+    const auth = await getRequiredAuthUser(req, res);
     if (!auth) return;
 
     const { oldPassword, password } = req.body;
@@ -709,7 +748,7 @@ app.patch('/api/pages/:pageId/password', async (req, res) => {
 // pages, a reset is impossible by design — the key IS the password.
 app.post('/api/pages/:pageId/password/reset', async (req, res) => {
   try {
-    const auth = getRequiredAuthUser(req, res);
+    const auth = await getRequiredAuthUser(req, res);
     if (!auth) return;
 
     const { password } = req.body;
@@ -914,20 +953,27 @@ function renderViewHtml(page) {
 
 app.get('/:pageIdOrSlug', (req, res) => {
   const param = req.params.pageIdOrSlug;
-  let page = null;
+  const looksLikeNanoid = /^[A-Za-z0-9_-]{8}$/.test(param);
+  const looksLikeSlug = /^[a-z0-9][a-z0-9-]+[a-z0-9]$/.test(param);
 
-  // Match 8-char nanoid IDs
-  if (/^[A-Za-z0-9_-]{8}$/.test(param)) {
-    page = db.getPage(param);
-  } else if (/^[a-z0-9][a-z0-9-]+[a-z0-9]$/.test(param)) {
-    page = db.getPageBySlug(param);
-  }
+  // Lookup priority: pageId first, then slug. Both are tried because the
+  // shapes overlap — the minimum-length valid Pro slug `aa-bb-cc` is also
+  // a valid 8-char nanoid shape, and we don't want public pages on those
+  // slugs to lose their SSR-injected meta (auto-unlock + hidden footer).
+  let page = null;
+  if (looksLikeNanoid) page = db.getPage(param);
+  if (!page && looksLikeSlug) page = db.getPageBySlug(param);
 
   if (!page) {
-    // Fall through: no DB hit. Still serve view.html so the password
-    // prompt can show the standard "no longer available" copy on its
-    // first verify attempt (consistent with the pre-Phase-4 behavior).
-    if (/^[A-Za-z0-9_-]{8}$/.test(param)) {
+    // Both nanoid- and slug-shaped misses serve view.html so the verify
+    // route can surface the standard "no longer available" copy. This
+    // matters for expired Pro slugs in particular — `getPageBySlug`
+    // filters by expiry, and after the nightly cleanup deletes the row
+    // there's no way to distinguish "expired" from "never existed", so
+    // we render the same expired-page UX either way (consistent with
+    // the long-standing nanoid behavior). True garbage (anything that
+    // doesn't match either shape) still 404s.
+    if (looksLikeNanoid || looksLikeSlug) {
       res.set('X-Frame-Options', 'DENY');
       return res.type('html').send(renderViewHtml(null));
     }
@@ -954,10 +1000,9 @@ function cleanupExpired() {
 // Phase 5: enforce Tier 2 on users whose grace window has ended.
 //
 // Runs alongside cleanupExpired(). For each lapsed user:
-//   1. Pick survivors — user-flagged via /api/pages/:id/keep, falling
-//      back to most-recently-created (proxy for "most-recently-viewed"
-//      since we don't track view timestamps yet) until we reach the
-//      Tier-2 cap.
+//   1. Pick survivors — user-flagged via /api/pages/:id/keep first,
+//      then fill remaining slots by most-recently-viewed until we reach
+//      the Tier-2 cap.
 //   2. Public-only links don't survive — Tier 2 has no public pages.
 //      User had 30 days to convert them to password-protected.
 //   3. Survivors get their custom slug released, view_cap cleared,
@@ -980,28 +1025,52 @@ function enforceLapsedGracePeriods() {
     // shortly — no need to handle them here.
     const live = allPages.filter(p => new Date(p.expires_at) > now);
 
-    // Pick survivors: explicit selections first (can be more than the cap;
-    // we trim by created_at DESC, which is how getUserPages already orders).
-    let survivors = live.filter(p => p.kept_after_grace);
-    if (survivors.length === 0) {
-      survivors = live.slice(0, keepLimit);
-    } else if (survivors.length > keepLimit) {
-      survivors = survivors.slice(0, keepLimit);
+    // Public pages cannot survive into Tier 2 (no public pages allowed).
+    // Per TIERS.md they're deleted unconditionally — pulling them out of
+    // the survivor pool *before* picking ensures the cap of 3 is spent on
+    // pages that can actually be demoted. Otherwise a user with 4 public
+    // + 2 password-protected pages and no explicit picks would lose all
+    // 6 (auto-pick grabs the 3 most-recent, all of which happen to be
+    // public; inner loop deletes them; the password-protected ones below
+    // never get a slot). We honor explicit Keep flags only on survivable
+    // pages — checking Keep on a public page can't override the tier rule.
+    const survivable = live.filter(p => !p.is_public);
+    const publicPages = live.filter(p => p.is_public);
+
+    // Pick survivors from survivable pages: explicit selections first,
+    // then fill any remaining slots by most-recently-viewed. Pages that
+    // have never been viewed fall back to created_at for deterministic
+    // ordering.
+    const recency = (p) => Date.parse(p.last_viewed_at || p.created_at || 0) || 0;
+    const byMostRecentlyViewed = (a, b) => recency(b) - recency(a);
+    const ordered = [...survivable].sort(byMostRecentlyViewed);
+    const survivors = [];
+    const keepIds = new Set();
+
+    for (const p of ordered.filter(p => p.kept_after_grace)) {
+      if (survivors.length >= keepLimit) break;
+      survivors.push(p);
+      keepIds.add(p.id);
     }
-    const keepIds = new Set(survivors.map(p => p.id));
+    for (const p of ordered) {
+      if (survivors.length >= keepLimit) break;
+      if (keepIds.has(p.id)) continue;
+      survivors.push(p);
+      keepIds.add(p.id);
+    }
 
     let deleted = 0;
     let demoted = 0;
 
-    for (const p of live) {
+    // Public pages: always deleted, never demoted.
+    for (const p of publicPages) {
+      db.deletePageById(p.id);
+      storage.deletePage(p.id);
+      deleted++;
+    }
+
+    for (const p of survivable) {
       if (!keepIds.has(p.id)) {
-        db.deletePageById(p.id);
-        storage.deletePage(p.id);
-        deleted++;
-        continue;
-      }
-      // Per spec: public links deleted unless converted during grace.
-      if (p.is_public) {
         db.deletePageById(p.id);
         storage.deletePage(p.id);
         deleted++;
@@ -1010,7 +1079,6 @@ function enforceLapsedGracePeriods() {
       // Demote to Tier 2: release slug, clear view cap, reset clock.
       if (p.slug) db.setPageSlug(p.id, null);
       db.updatePageViewCap(p.id, null);
-      db.updatePageIsPublic(p.id, false);
       db.updatePageExpiration(p.id, newExpiry);
       db.updatePageTier(p.id, tiers.TIER.ACCOUNT);
       db.setPageKeptAfterGrace(p.id, false);
