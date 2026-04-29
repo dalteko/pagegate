@@ -608,12 +608,15 @@ app.get('/api/pages', (req, res) => {
       viewCap: cap,
       isPublic: !!p.is_public,
       tier,
+      // Per-action capability flags so the dashboard can render the
+      // right buttons without duplicating tier rules. Public pages
+      // skip both — there's no password to change or reset on a page
+      // that has no password gate.
+      hasPassword: !p.is_public,
       // Whether this page supports server-side password reset. Pages
       // created on the password-derived path (legacy) cannot be reset
       // without the old password — the page key is derived from it.
-      passwordResettable: !!p.wrapped_key,
-      // Per-action capability flags so the dashboard can render the
-      // right buttons without duplicating tier logic.
+      passwordResettable: !!p.wrapped_key && !p.is_public,
       canDelete: isPro,
       canEdit: isPro,
     };
@@ -757,20 +760,22 @@ function renderViewHtml(page) {
 
 app.get('/:pageIdOrSlug', (req, res) => {
   const param = req.params.pageIdOrSlug;
-  let page = null;
+  const looksLikeNanoid = /^[A-Za-z0-9_-]{8}$/.test(param);
+  const looksLikeSlug = /^[a-z0-9][a-z0-9-]+[a-z0-9]$/.test(param);
 
-  // Match 8-char nanoid IDs
-  if (/^[A-Za-z0-9_-]{8}$/.test(param)) {
-    page = db.getPage(param);
-  } else if (/^[a-z0-9][a-z0-9-]+[a-z0-9]$/.test(param)) {
-    page = db.getPageBySlug(param);
-  }
+  // Lookup priority: pageId first, then slug. Both are tried because the
+  // shapes overlap — the minimum-length valid Pro slug `aa-bb-cc` is also
+  // a valid 8-char nanoid shape, and we don't want public pages on those
+  // slugs to lose their SSR-injected meta (auto-unlock + hidden footer).
+  let page = null;
+  if (looksLikeNanoid) page = db.getPage(param);
+  if (!page && looksLikeSlug) page = db.getPageBySlug(param);
 
   if (!page) {
-    // Fall through: no DB hit. Still serve view.html so the password
-    // prompt can show the standard "no longer available" copy on its
-    // first verify attempt (consistent with the pre-Phase-4 behavior).
-    if (/^[A-Za-z0-9_-]{8}$/.test(param)) {
+    // Nanoid-shaped misses still serve view.html so the verify route can
+    // surface the standard "no longer available" copy — preserves the
+    // pre-Phase-4 behavior for expired or never-existed page IDs.
+    if (looksLikeNanoid) {
       res.set('X-Frame-Options', 'DENY');
       return res.type('html').send(renderViewHtml(null));
     }

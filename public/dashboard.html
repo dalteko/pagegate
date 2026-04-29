@@ -193,6 +193,13 @@
         // server says is allowed for this page.
         const passwordMode = page.passwordResettable ? 'reset' : 'change';
         const passwordLabel = page.passwordResettable ? 'Reset password' : 'Change password';
+        // Public pages have no password gate, so the change/reset action
+        // is meaningless — the server-side `hasPassword` flag drives whether
+        // we render the button at all (Phase 4b will add an "edit" entry
+        // point that can toggle public off and add a password back).
+        const passwordBtn = page.hasPassword
+          ? `<button class="btn-icon" data-action="password" data-id="${escapeAttr(page.id)}" data-mode="${passwordMode}">${passwordLabel}</button>`
+          : '';
         const deleteBtn = page.canDelete
           ? `<button class="btn-icon btn-icon--delete" data-action="delete" data-id="${escapeAttr(page.id)}">Delete</button>`
           : '';
@@ -215,7 +222,7 @@
           <div class="dash-page-actions">
             <button class="btn-icon" data-action="copy" data-slug="${escapeAttr(slug)}">Copy</button>
             <button class="btn-icon" data-action="open" data-slug="${escapeAttr(slug)}">Open</button>
-            <button class="btn-icon" data-action="password" data-id="${escapeAttr(page.id)}" data-mode="${passwordMode}">${passwordLabel}</button>
+            ${passwordBtn}
             ${deleteBtn}
           </div>
         `;
