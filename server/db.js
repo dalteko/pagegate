@@ -154,12 +154,14 @@ const insertStmt = db.prepare(`
   INSERT INTO pages (
     id, password_hash, original_filename, file_size,
     created_at, expires_at, encryption_salt,
-    wrapped_key, tier_at_creation, view_cap, is_public
+    wrapped_key, tier_at_creation, view_cap, is_public,
+    kept_after_grace
   )
   VALUES (
     @id, @password_hash, @original_filename, @file_size,
     @created_at, @expires_at, @encryption_salt,
-    @wrapped_key, @tier_at_creation, @view_cap, @is_public
+    @wrapped_key, @tier_at_creation, @view_cap, @is_public,
+    @kept_after_grace
   )
 `);
 
@@ -297,6 +299,7 @@ const insertPageAtomicFn = db.transaction((page) => {
     tier_at_creation: page.tier_at_creation ?? null,
     view_cap: page.view_cap ?? null,
     is_public: page.is_public ? 1 : 0,
+    kept_after_grace: page.kept_after_grace ? 1 : 0,
   });
   if (page.user_id) {
     setPageOwnerStmt.run(page.user_id, page.id);
@@ -319,7 +322,10 @@ const claimStripeEventFn = db.transaction((eventId, type) => {
 
 module.exports = {
   insertPage(page) {
-    return insertStmt.run(page);
+    return insertStmt.run({
+      kept_after_grace: 0,
+      ...page,
+    });
   },
   getPage(id) {
     return getStmt.get(id, new Date().toISOString());
