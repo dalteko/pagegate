@@ -19,7 +19,18 @@ const env = {
   DATA_DIR: path.join(tmpDir, 'data'),
   UPLOADS_DIR: path.join(tmpDir, 'uploads'),
   PRO_ENABLED: 'false',
+  PAGE_KEY_MASTER: '0000000000000000000000000000000000000000000000000000000000000000',
 };
+
+process.env.DATA_DIR = env.DATA_DIR;
+process.env.UPLOADS_DIR = env.UPLOADS_DIR;
+process.env.PAGE_KEY_MASTER = env.PAGE_KEY_MASTER;
+
+const Database = require('better-sqlite3');
+const db = require('../server/db');
+const storage = require('../server/storage');
+const cryptoLib = require('../server/crypto');
+const directDb = new Database(path.join(env.DATA_DIR, 'pagegate.db'));
 
 const child = spawn('node', ['server/index.js'], {
   env,
@@ -74,6 +85,29 @@ async function check(name, fn) {
 
 function assertStatus(actual, expected, label) {
   if (actual !== expected) throw new Error(`${label}: expected ${expected}, got ${actual}`);
+}
+
+function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
+  const now = new Date();
+  const pageKey = cryptoLib.generatePageKey();
+  const blob = cryptoLib.encryptWithKey(html, pageKey);
+  storage.savePageBlob(id, blob);
+  db.insertPageAtomic({
+    id,
+    password_hash: '',
+    original_filename: `${id}.html`,
+    file_size: Buffer.byteLength(html),
+    created_at: now.toISOString(),
+    expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    encryption_salt: null,
+    wrapped_key: cryptoLib.wrapPageKey(pageKey),
+    tier_at_creation: 3,
+    is_public: true,
+    view_cap: viewCap,
+  });
+  if (viewCount > 0) {
+    directDb.prepare('UPDATE pages SET view_count = ? WHERE id = ?').run(viewCount, id);
+  }
 }
 
 (async () => {
@@ -154,6 +188,45 @@ function assertStatus(actual, expected, label) {
     assertStatus(r.status, 200, `POST /api/verify/${pageId} (right pw)`);
     const j = await r.json();
     if (!j.html.includes('<h1>smoke</h1>')) throw new Error('decrypted HTML did not match what we uploaded');
+  });
+
+  await check('Public pages bypass password-attempt limiter but still unlock', async () => {
+    const publicId = 'PubRate1';
+    insertPublicWrappedPage({
+      id: publicId,
+      html: '<!doctype html><h1>public rate</h1>',
+      viewCap: 20,
+    });
+    for (let i = 0; i < 11; i++) {
+      const r = await fetch(`${base}/api/verify/${publicId}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      assertStatus(r.status, 200, `public verify attempt ${i + 1}`);
+    }
+  });
+
+  await check('Pro pages with no explicit cap fall back to the 1,000-view default', async () => {
+    const publicId = 'PubCap01';
+    insertPublicWrappedPage({
+      id: publicId,
+      html: '<!doctype html><h1>public cap</h1>',
+      viewCap: null,
+      viewCount: 999,
+    });
+    const ok = await fetch(`${base}/api/verify/${publicId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assertStatus(ok.status, 200, 'public verify at 999 views');
+    const capped = await fetch(`${base}/api/verify/${publicId}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assertStatus(capped.status, 410, 'public verify at default cap');
   });
 
   await check('Stripe checkout route is wired up (no 5xx)', async () => {

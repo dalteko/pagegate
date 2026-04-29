@@ -229,10 +229,27 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_BYTES },
 });
 
+function findLivePage(pageIdOrSlug) {
+  let page = db.getPage(pageIdOrSlug);
+  if (!page) page = db.getPageBySlug(pageIdOrSlug);
+  return page;
+}
+
+function effectiveViewCap(page) {
+  if (page.view_cap !== null && page.view_cap !== undefined) return page.view_cap;
+  const tierAtCreation = page.tier_at_creation || tiers.TIER.ANONYMOUS;
+  const rule = tiers.RULES[tierAtCreation];
+  return rule.viewCap ?? rule.viewCapDefault ?? null;
+}
+
 // Rate limiter for password verification: 10 attempts per IP per page per hour
 const verifyLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 10,
+  // Public Pro pages have no password to brute-force. They are still gated
+  // by the per-page view cap in the handler, but should not trip the
+  // password-attempt limiter on normal refreshes.
+  skip: (req) => !!findLivePage(req.params.pageId)?.is_public,
   keyGenerator: (req) => `${req.ip}-${req.params.pageId}`,
   message: { error: 'Too many attempts. Try again later.' },
   standardHeaders: true,
@@ -418,9 +435,7 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
     const { pageId } = req.params;
     const { password } = req.body;
 
-    // Try by ID first, then by slug
-    let page = db.getPage(pageId);
-    if (!page) page = db.getPageBySlug(pageId);
+    const page = findLivePage(pageId);
     if (!page) return res.status(404).json({ error: 'Page not found or expired' });
 
     if (!page.is_public) {
@@ -429,11 +444,10 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
       if (!match) return res.status(401).json({ error: 'Wrong password' });
     }
 
-    // View-cap enforcement. The per-page `view_cap` column wins if set
-    // (Pro custom caps); otherwise fall back to the tier rule. A null cap
+    // View-cap enforcement. The per-page `view_cap` column wins if set;
+    // otherwise fall back to the tier rule/default. A null effective cap
     // means unlimited.
-    const tierAtCreation = page.tier_at_creation || tiers.TIER.ANONYMOUS;
-    const cap = page.view_cap ?? tiers.RULES[tierAtCreation].viewCap;
+    const cap = effectiveViewCap(page);
     if (cap !== null && cap !== undefined && (page.view_count || 0) >= cap) {
       return res.status(410).json({ error: 'View limit reached', reason: 'view_cap' });
     }
