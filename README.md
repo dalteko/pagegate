@@ -107,9 +107,13 @@ List the calling user's pages. Response includes `viewCount`, `viewCap`, `isPubl
 
 Edit-in-place: replace HTML, change slug / expiration / `isPublic` / `viewCap`. Multipart, all fields optional.
 
+### `PATCH /api/pages/:pageId/password` (signed-in)
+
+Change a page's password by supplying the old one. Body: `{ "oldPassword", "password" }`. Works on both crypto paths — wrapped-key pages just rotate the bcrypt hash; password-derived pages re-encrypt the blob with the new key.
+
 ### `POST /api/pages/:pageId/password/reset` (signed-in)
 
-Reset the page password without supplying the old one. Wrapped-key pages only (account/Pro). Anonymous pages return 400 with `reason: 'not_resettable'`.
+Reset the page password without supplying the old one. Wrapped-key pages only (account/Pro). Password-derived pages return 400 with `reason: 'not_resettable'` — the page key IS the password, so reset is impossible by design.
 
 ### `POST /api/pages/:pageId/keep` (Pro / grace)
 
