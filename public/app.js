@@ -1,4 +1,147 @@
 (() => {
+  // === Clerk Auth State ===
+  let clerkInstance = null;
+  let currentUser = null; // { clerkId, email, isPro, proExpiresAt }
+
+  const authNav = document.getElementById('authNav');
+  const proBadge = document.getElementById('proBadge');
+  const goProBtn = document.getElementById('goProBtn');
+  const goProBtn2 = document.getElementById('goProBtn2');
+  const manageBtn = document.getElementById('manageBtn');
+  const authUser = document.getElementById('authUser');
+  const authAvatar = document.getElementById('authAvatar');
+  const signOutBtn = document.getElementById('signOutBtn');
+  const signInBtn = document.getElementById('signInBtn');
+  const proUpsell = document.getElementById('proUpsell');
+  const proFields = document.getElementById('proFields');
+  const slugInput = document.getElementById('slugInput');
+  const slugHint = document.getElementById('slugHint');
+  const expirationSelect = document.getElementById('expirationSelect');
+  const dashBtn = document.getElementById('dashBtn');
+
+  async function initClerk() {
+    const scriptTag = document.getElementById('clerk-script');
+    const publishableKey = scriptTag?.getAttribute('data-clerk-publishable-key');
+    if (!publishableKey) return; // Clerk not configured
+
+    // Wait for Clerk to load
+    await new Promise((resolve) => {
+      if (window.Clerk) return resolve();
+      scriptTag.addEventListener('load', resolve);
+    });
+
+    clerkInstance = window.Clerk;
+    await clerkInstance.load();
+
+    authNav.classList.remove('hidden');
+
+    clerkInstance.addListener(handleAuthChange);
+    handleAuthChange();
+  }
+
+  async function handleAuthChange() {
+    const user = clerkInstance?.user;
+
+    if (user) {
+      // Sync user to our DB
+      try {
+        const token = await clerkInstance.session.getToken();
+        const res = await fetch('/api/auth/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ email: user.primaryEmailAddress?.emailAddress }),
+        });
+        if (res.ok) {
+          currentUser = await res.json();
+        }
+      } catch (e) {
+        console.error('Auth sync failed:', e);
+      }
+
+      // Update UI
+      signInBtn.classList.add('hidden');
+      authUser.classList.remove('hidden');
+      authAvatar.src = user.imageUrl || '';
+
+      if (currentUser?.isPro) {
+        proBadge.classList.remove('hidden');
+        goProBtn.classList.add('hidden');
+        manageBtn.classList.remove('hidden');
+        dashBtn.classList.remove('hidden');
+        proFields?.classList.remove('hidden');
+        proUpsell.classList.add('hidden');
+      } else {
+        proBadge.classList.add('hidden');
+        goProBtn.classList.remove('hidden');
+        manageBtn.classList.add('hidden');
+        dashBtn.classList.add('hidden');
+        proFields?.classList.add('hidden');
+      }
+    } else {
+      // Signed out
+      currentUser = null;
+      signInBtn.classList.remove('hidden');
+      authUser.classList.add('hidden');
+      proBadge.classList.add('hidden');
+      goProBtn.classList.add('hidden');
+      manageBtn.classList.add('hidden');
+      dashBtn.classList.add('hidden');
+      proFields?.classList.add('hidden');
+      proUpsell.classList.add('hidden');
+    }
+  }
+
+  async function startCheckout() {
+    if (!clerkInstance?.user) {
+      clerkInstance?.openSignIn();
+      return;
+    }
+    try {
+      const token = await clerkInstance.session.getToken();
+      const res = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (e) {
+      console.error('Checkout failed:', e);
+    }
+  }
+
+  async function openBillingPortal() {
+    try {
+      const token = await clerkInstance.session.getToken();
+      const res = await fetch('/api/billing-portal', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (e) {
+      console.error('Billing portal failed:', e);
+    }
+  }
+
+  // Auth event listeners
+  signInBtn?.addEventListener('click', () => clerkInstance?.openSignIn());
+  signOutBtn?.addEventListener('click', () => clerkInstance?.signOut());
+  goProBtn?.addEventListener('click', startCheckout);
+  goProBtn2?.addEventListener('click', startCheckout);
+  manageBtn?.addEventListener('click', openBillingPortal);
+
+  // Initialize Clerk
+  initClerk();
+
   // Elements
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
@@ -154,7 +297,22 @@
       formData.append('file', currentFile);
       formData.append('password', password);
 
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      // Add Pro fields if available
+      if (currentUser?.isPro) {
+        const slug = slugInput?.value.trim().toLowerCase();
+        if (slug) formData.append('slug', slug);
+        const expiration = expirationSelect?.value;
+        if (expiration) formData.append('expiration', expiration);
+      }
+
+      // Include auth header if signed in
+      const headers = {};
+      if (clerkInstance?.session) {
+        const token = await clerkInstance.session.getToken();
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch('/api/upload', { method: 'POST', body: formData, headers });
       const data = await res.json();
 
       if (!res.ok) {
@@ -164,14 +322,17 @@
 
       // Format expiration date
       const expDate = new Date(data.expiresAt);
-      const expStr = expDate.toLocaleDateString('en-US', {
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      });
-
       linkOutput.value = data.url;
-      expirationNote.textContent = `Expires ${expStr}`;
+      if (expDate.getFullYear() >= 9999) {
+        expirationNote.textContent = 'Never expires';
+      } else {
+        const expStr = expDate.toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+        });
+        expirationNote.textContent = `Expires ${expStr}`;
+      }
       resultSection.classList.remove('hidden');
       passwordSection.classList.add('hidden');
 
@@ -185,6 +346,11 @@
         createdAt: new Date().toISOString(),
         expiresAt: data.expiresAt,
       });
+
+      // Show Pro upsell for non-Pro users after upload
+      if (clerkInstance && !currentUser?.isPro) {
+        proUpsell.classList.remove('hidden');
+      }
 
       resultSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch {
@@ -229,18 +395,38 @@
     currentFile = null;
     fileInput.value = '';
     passwordInput.value = '';
+    if (slugInput) slugInput.value = '';
+    if (slugHint) { slugHint.textContent = ''; slugHint.className = 'field-hint'; }
+    if (expirationSelect) expirationSelect.value = '30';
     fileInfo.textContent = '';
     previewFrame.srcdoc = '';
     dropzone.style.display = '';
     previewSection.classList.add('hidden');
     passwordSection.classList.add('hidden');
     resultSection.classList.add('hidden');
+    proUpsell.classList.add('hidden');
     copyBtn.textContent = 'Copy';
     copyBtn.classList.remove('copied');
     pasteSection.classList.add('hidden');
     pasteInput.value = '';
     pasteToggleBtn.classList.remove('hidden');
   }
+
+  // Slug validation on input
+  slugInput?.addEventListener('input', () => {
+    const val = slugInput.value.trim().toLowerCase();
+    if (!val) { slugHint.textContent = ''; slugHint.className = 'field-hint'; return; }
+    if (val.length < 3) {
+      slugHint.textContent = 'At least 3 characters';
+      slugHint.className = 'field-hint field-hint--error';
+    } else if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(val)) {
+      slugHint.textContent = 'Lowercase letters, numbers, and hyphens only';
+      slugHint.className = 'field-hint field-hint--error';
+    } else {
+      slugHint.textContent = '';
+      slugHint.className = 'field-hint';
+    }
+  });
 
   // === History (localStorage) ===
   function getHistory() {
@@ -299,11 +485,14 @@
       item.className = 'history-item';
 
       const expires = new Date(entry.expiresAt);
+      const isNever = expires.getFullYear() >= 9999;
       const daysLeft = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
-      const isExpired = daysLeft <= 0;
+      const isExpired = !isNever && daysLeft <= 0;
 
       let metaText;
-      if (isExpired) {
+      if (isNever) {
+        metaText = 'Never expires';
+      } else if (isExpired) {
         metaText = '<span class="expired">Expired</span>';
       } else if (daysLeft === 1) {
         metaText = '1 day left';
