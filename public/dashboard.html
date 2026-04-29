@@ -208,6 +208,16 @@
     async function loadPages() {
       try {
         const token = await getToken();
+        // Ensure a local user row exists before reading /api/me. Users who
+        // land directly on /dashboard after Clerk sign-in may not have hit
+        // the homepage sync path yet.
+        await fetch('/api/auth/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
         const meRes = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
         if (meRes.ok) {
           const me = await meRes.json();
