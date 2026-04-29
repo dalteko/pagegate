@@ -46,7 +46,7 @@
     <div class="modal-overlay hidden" id="editModal">
       <div class="modal-card">
         <h3>Edit page</h3>
-        <p class="modal-note">All fields are optional. Leave anything blank to keep the current value.</p>
+        <p class="modal-note">Fields are prefilled with the current values. Clearing the slug or view limit removes the custom value (the slug reverts to the random URL, the view limit reverts to the tier default).</p>
         <div class="input-group">
           <label for="editFileInput">Replace HTML</label>
           <input type="file" id="editFileInput" accept=".html,.htm">
@@ -262,12 +262,16 @@
           ? `<button class="btn-icon" data-action="edit" data-id="${escapeAttr(page.id)}">Edit</button>`
           : '';
         // Stash the page payload on the row so the edit modal can prefill
-        // without a second fetch.
+        // without a second fetch. `viewCapExplicit` is the raw DB value
+        // (null when no per-page cap is set) — distinct from `viewCap`,
+        // which the server resolves to the tier default for display. The
+        // modal needs the raw value so a no-op save doesn't pin the page
+        // to whatever the current default happens to be.
         el.dataset.page = JSON.stringify({
           id: page.id,
           slug: page.slug,
           isPublic: page.isPublic,
-          viewCap: page.viewCap,
+          viewCapExplicit: page.viewCapExplicit ?? null,
         });
 
         el.innerHTML = `
@@ -322,7 +326,7 @@
         editSlugHint.textContent = '';
         editSlugHint.className = 'field-hint';
         editExpirationSelect.value = '';
-        editViewCapInput.value = meta.viewCap != null ? String(meta.viewCap) : '';
+        editViewCapInput.value = meta.viewCapExplicit != null ? String(meta.viewCapExplicit) : '';
         editIsPublicInput.checked = !!meta.isPublic;
         editModalError.classList.add('hidden');
         editModal.classList.remove('hidden');
@@ -430,9 +434,12 @@
     editSaveBtn.addEventListener('click', async () => {
       editModalError.classList.add('hidden');
       const fd = new FormData();
-      // Only include fields the user actually changed. Empty string is a
-      // sentinel for "clear this field" on slug and viewCap; the server
-      // distinguishes undefined from empty.
+      // File and expiration are only sent when the user picks one (the
+      // file input starts empty, the expiration <select> defaults to "Keep
+      // current"). Slug, view cap, and isPublic are always sent — they're
+      // prefilled from the row, so re-submitting the prefilled value is a
+      // no-op. Empty string on slug or viewCap is the sentinel for
+      // "clear this field"; the server distinguishes undefined from empty.
       if (editFileInput.files[0]) fd.append('file', editFileInput.files[0]);
       fd.append('slug', editSlugInput.value.trim().toLowerCase());
       if (editExpirationSelect.value) fd.append('expiration', editExpirationSelect.value);

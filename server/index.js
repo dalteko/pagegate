@@ -606,6 +606,10 @@ app.get('/api/pages', (req, res) => {
       expiresAt: p.expires_at,
       viewCount: p.view_count || 0,
       viewCap: cap,
+      // Raw DB value (null when no explicit cap). The edit modal uses this
+      // to distinguish "no cap set" from "cap set to the tier default" —
+      // a no-op save would otherwise pin the page to the current default.
+      viewCapExplicit: p.view_cap,
       isPublic: !!p.is_public,
       tier,
       // Whether this page supports server-side password reset. Pages
