@@ -980,11 +980,23 @@ function enforceLapsedGracePeriods() {
     // shortly — no need to handle them here.
     const live = allPages.filter(p => new Date(p.expires_at) > now);
 
-    // Pick survivors: explicit selections first (can be more than the cap;
-    // we trim by created_at DESC, which is how getUserPages already orders).
-    let survivors = live.filter(p => p.kept_after_grace);
+    // Public pages cannot survive into Tier 2 (no public pages allowed).
+    // Per TIERS.md they're deleted unconditionally — pulling them out of
+    // the survivor pool *before* picking ensures the cap of 3 is spent on
+    // pages that can actually be demoted. Otherwise a user with 4 public
+    // + 2 password-protected pages and no explicit picks would lose all
+    // 6 (auto-pick grabs the 3 most-recent, all of which happen to be
+    // public; inner loop deletes them; the password-protected ones below
+    // never get a slot). We honor explicit Keep flags only on survivable
+    // pages — checking Keep on a public page can't override the tier rule.
+    const survivable = live.filter(p => !p.is_public);
+    const publicPages = live.filter(p => p.is_public);
+
+    // Pick survivors from survivable pages: explicit selections first
+    // (trimmed by created_at DESC, which is how getUserPages orders).
+    let survivors = survivable.filter(p => p.kept_after_grace);
     if (survivors.length === 0) {
-      survivors = live.slice(0, keepLimit);
+      survivors = survivable.slice(0, keepLimit);
     } else if (survivors.length > keepLimit) {
       survivors = survivors.slice(0, keepLimit);
     }
@@ -993,15 +1005,15 @@ function enforceLapsedGracePeriods() {
     let deleted = 0;
     let demoted = 0;
 
-    for (const p of live) {
+    // Public pages: always deleted, never demoted.
+    for (const p of publicPages) {
+      db.deletePageById(p.id);
+      storage.deletePage(p.id);
+      deleted++;
+    }
+
+    for (const p of survivable) {
       if (!keepIds.has(p.id)) {
-        db.deletePageById(p.id);
-        storage.deletePage(p.id);
-        deleted++;
-        continue;
-      }
-      // Per spec: public links deleted unless converted during grace.
-      if (p.is_public) {
         db.deletePageById(p.id);
         storage.deletePage(p.id);
         deleted++;
@@ -1010,7 +1022,6 @@ function enforceLapsedGracePeriods() {
       // Demote to Tier 2: release slug, clear view cap, reset clock.
       if (p.slug) db.setPageSlug(p.id, null);
       db.updatePageViewCap(p.id, null);
-      db.updatePageIsPublic(p.id, false);
       db.updatePageExpiration(p.id, newExpiry);
       db.updatePageTier(p.id, tiers.TIER.ACCOUNT);
       db.setPageKeptAfterGrace(p.id, false);
