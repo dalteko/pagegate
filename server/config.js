@@ -6,6 +6,9 @@ const REQUIRED_PRO_ENV = [
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'STRIPE_PRICE_ID',
+  // Server master key for Tier 2/3 page encryption (see server/crypto.js).
+  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  'PAGE_KEY_MASTER',
 ];
 
 function validateConfig() {

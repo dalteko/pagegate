@@ -33,10 +33,15 @@ Password-protected HTML page sharing. Upload an HTML file, set a password, get a
 ## Project structure
 
 ```
+├── docs/
+│   ├── PRD.md          # Product requirements (tiered plans rollout)
+│   └── TIERS.md        # Tier specification (read this first)
 ├── server/
 │   ├── index.js        # Express app, API routes, cleanup scheduler
 │   ├── db.js           # SQLite schema, queries, migrations
-│   └── storage.js      # Encrypted file storage (AES-256-GCM)
+│   ├── storage.js      # File I/O for page blobs (no crypto)
+│   ├── crypto.js       # AES-256-GCM, both password-derived and master-key paths
+│   └── tiers.js        # Tier rules registry (single source of truth)
 ├── public/
 │   ├── index.html      # Upload page
 │   ├── view.html       # Password prompt + sandboxed content frame
@@ -91,6 +96,7 @@ npm start
 | `STRIPE_SECRET_KEY` | _(required when Pro is enabled)_ | Stripe secret API key |
 | `STRIPE_WEBHOOK_SECRET` | _(required when Pro is enabled)_ | Stripe webhook signing secret |
 | `STRIPE_PRICE_ID` | _(required when Pro is enabled)_ | Stripe recurring price ID for the Pro plan |
+| `PAGE_KEY_MASTER` | _(required when Pro is enabled)_ | 32-byte server master key (64 hex chars or 44 base64 chars). Wraps per-page encryption keys for account/Pro tiers so server-side password reset works. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. **Rotate carefully — losing this key makes all account/Pro pages unreadable.** |
 
 When `PRO_ENABLED` is not `true`, PageGate runs in free mode: uploads still work, but Clerk auth, Stripe billing, custom URLs, custom expiration, and dashboard APIs are disabled. When `PRO_ENABLED=true`, the server validates the required Pro variables at startup and exits before serving traffic if any are missing.
 
