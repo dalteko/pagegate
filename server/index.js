@@ -5,23 +5,24 @@ const crypto = require('crypto');
 const fs = require('fs');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
-const { clerkMiddleware, getAuth } = require('@clerk/express');
+const { clerkClient, clerkMiddleware, getAuth } = require('@clerk/express');
 const Stripe = require('stripe');
 const db = require('./db');
 const storage = require('./storage');
+const config = require('./config');
 
 const app = express();
 const PORT = process.env.PORT || 3457;
 const BASE_URL = process.env.BASE_URL || '';
 
-const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+const stripe = config.proEnabled ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 // Trust proxy (Railway/Cloudflare)
 app.set('trust proxy', 1);
 
 // Stripe webhook needs raw body — must be before express.json()
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
-  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) {
+  if (!config.proEnabled || !stripe) {
     return res.status(500).json({ error: 'Stripe not configured' });
   }
 
@@ -33,11 +34,9 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     return res.status(400).json({ error: 'Invalid signature' });
   }
 
-  // Idempotency: skip already-processed events
-  if (isStripeEventProcessed(event.id)) {
+  if (db.hasProcessedStripeEvent(event.id)) {
     return res.json({ received: true, skipped: true });
   }
-  markStripeEventProcessed(event.id);
 
   switch (event.type) {
     case 'checkout.session.completed': {
@@ -86,6 +85,7 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     }
   }
 
+  db.markStripeEventProcessed(event.id, event.type);
   res.json({ received: true });
 });
 
@@ -93,12 +93,12 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
 app.use(express.json());
 
 // Inject Clerk publishable key into HTML files at serve time
-const CLERK_PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY || '';
+const CLERK_PUBLISHABLE_KEY = config.proEnabled ? process.env.CLERK_PUBLISHABLE_KEY : '';
 const publicDir = path.join(__dirname, '..', 'public');
 
 app.use((req, res, next) => {
   // Only intercept requests for HTML files that need key injection
-  if (CLERK_PUBLISHABLE_KEY && (req.path === '/' || req.path === '/index.html' || req.path === '/dashboard.html')) {
+  if (req.path === '/' || req.path === '/index.html' || req.path === '/dashboard.html') {
     const filePath = req.path === '/' ? path.join(publicDir, 'index.html') : path.join(publicDir, req.path);
     try {
       let html = fs.readFileSync(filePath, 'utf-8');
@@ -115,12 +115,13 @@ app.use((req, res, next) => {
 app.use(express.static(publicDir));
 
 // Clerk auth middleware — populates req.auth for all routes
-if (process.env.CLERK_SECRET_KEY) {
+if (config.proEnabled) {
   app.use(clerkMiddleware());
 }
 
 // Helper: safely get userId from Clerk auth (returns null if not configured)
 function getAuthUserId(req) {
+  if (!config.proEnabled) return null;
   try {
     const { userId } = getAuth(req);
     return userId || null;
@@ -138,29 +139,20 @@ function isUserPro(user) {
   return false;
 }
 
-// Track processed Stripe event IDs to prevent duplicate processing
-const processedStripeEvents = new Map(); // eventId -> timestamp
-const STRIPE_EVENT_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
-function isStripeEventProcessed(eventId) {
-  const ts = processedStripeEvents.get(eventId);
-  if (!ts) return false;
-  if (Date.now() - ts > STRIPE_EVENT_TTL) {
-    processedStripeEvents.delete(eventId);
-    return false;
+function getRequiredProUser(req, res) {
+  const userId = getAuthUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Not signed in' });
+    return null;
   }
-  return true;
-}
 
-function markStripeEventProcessed(eventId) {
-  processedStripeEvents.set(eventId, Date.now());
-  // Prune old entries periodically
-  if (processedStripeEvents.size > 1000) {
-    const cutoff = Date.now() - STRIPE_EVENT_TTL;
-    for (const [id, ts] of processedStripeEvents) {
-      if (ts < cutoff) processedStripeEvents.delete(id);
-    }
+  const user = db.getUser(userId);
+  if (!isUserPro(user)) {
+    res.status(403).json({ error: 'Pro subscription required' });
+    return null;
   }
+
+  return { userId, user };
 }
 
 // Multer: memory storage, 5MB limit
@@ -373,19 +365,27 @@ app.get('/api/me', (req, res) => {
 });
 
 // POST /api/auth/sync — called after Clerk sign-in to ensure user exists in DB
-app.post('/api/auth/sync', (req, res) => {
-  const userId = getAuthUserId(req);
-  if (!userId) return res.status(401).json({ error: 'Not signed in' });
+app.post('/api/auth/sync', async (req, res) => {
+  try {
+    const userId = getAuthUserId(req);
+    if (!userId) return res.status(401).json({ error: 'Not signed in' });
 
-  const { email } = req.body;
-  const user = db.getOrCreateUser(userId, email || null);
+    const clerkUser = await clerkClient.users.getUser(userId);
+    const email = clerkUser.primaryEmailAddress?.emailAddress
+      || clerkUser.emailAddresses?.find((addr) => addr.id === clerkUser.primaryEmailAddressId)?.emailAddress
+      || null;
+    const user = db.getOrCreateUser(userId, email);
 
-  res.json({
-    clerkId: user.clerk_id,
-    email: user.email,
-    isPro: isUserPro(user),
-    proExpiresAt: user.pro_expires_at,
-  });
+    res.json({
+      clerkId: user.clerk_id,
+      email: user.email,
+      isPro: isUserPro(user),
+      proExpiresAt: user.pro_expires_at,
+    });
+  } catch (err) {
+    console.error('Auth sync error:', err);
+    res.status(500).json({ error: 'Auth sync failed' });
+  }
 });
 
 // POST /api/checkout — create Stripe Checkout session
@@ -449,10 +449,10 @@ app.post('/api/billing-portal', async (req, res) => {
 
 // GET /api/pages — list user's pages
 app.get('/api/pages', (req, res) => {
-  const userId = getAuthUserId(req);
-  if (!userId) return res.status(401).json({ error: 'Not signed in' });
+  const auth = getRequiredProUser(req, res);
+  if (!auth) return;
 
-  const pages = db.getUserPages(userId);
+  const pages = db.getUserPages(auth.userId);
   res.json(pages.map(p => ({
     id: p.id,
     filename: p.original_filename,
@@ -465,12 +465,12 @@ app.get('/api/pages', (req, res) => {
 
 // DELETE /api/pages/:pageId — delete a page (owner only)
 app.delete('/api/pages/:pageId', (req, res) => {
-  const userId = getAuthUserId(req);
-  if (!userId) return res.status(401).json({ error: 'Not signed in' });
+  const auth = getRequiredProUser(req, res);
+  if (!auth) return;
 
   const page = db.getPageById(req.params.pageId);
   if (!page) return res.status(404).json({ error: 'Page not found' });
-  if (page.user_id !== userId) return res.status(403).json({ error: 'Not your page' });
+  if (page.user_id !== auth.userId) return res.status(403).json({ error: 'Not your page' });
 
   storage.deletePage(page.id);
   db.deletePage(page.id);
@@ -481,8 +481,8 @@ app.delete('/api/pages/:pageId', (req, res) => {
 // Requires the old password to re-encrypt the file with the new one.
 app.patch('/api/pages/:pageId/password', async (req, res) => {
   try {
-    const userId = getAuthUserId(req);
-    if (!userId) return res.status(401).json({ error: 'Not signed in' });
+    const auth = getRequiredProUser(req, res);
+    if (!auth) return;
 
     const { oldPassword, password } = req.body;
     if (!password || !password.trim()) return res.status(400).json({ error: 'New password is required' });
@@ -490,7 +490,7 @@ app.patch('/api/pages/:pageId/password', async (req, res) => {
 
     const page = db.getPageById(req.params.pageId);
     if (!page) return res.status(404).json({ error: 'Page not found' });
-    if (page.user_id !== userId) return res.status(403).json({ error: 'Not your page' });
+    if (page.user_id !== auth.userId) return res.status(403).json({ error: 'Not your page' });
 
     // Check if page has expired and file may have been cleaned up
     if (new Date(page.expires_at) < new Date()) {

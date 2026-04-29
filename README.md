@@ -85,6 +85,14 @@ npm start
 | `BASE_URL` | _(auto-detected)_ | Public URL for link generation (e.g. `https://pagegate.app`) |
 | `DATA_DIR` | `./data` | SQLite database directory |
 | `UPLOADS_DIR` | `./uploads` | Encrypted file storage directory |
+| `PRO_ENABLED` | `false` | Enables Clerk auth, Stripe billing, custom URLs, custom expiration, and the Pro dashboard. Set to `true` only when the required Pro variables below are configured. |
+| `CLERK_PUBLISHABLE_KEY` | _(required when Pro is enabled)_ | Clerk browser publishable key |
+| `CLERK_SECRET_KEY` | _(required when Pro is enabled)_ | Clerk backend secret key |
+| `STRIPE_SECRET_KEY` | _(required when Pro is enabled)_ | Stripe secret API key |
+| `STRIPE_WEBHOOK_SECRET` | _(required when Pro is enabled)_ | Stripe webhook signing secret |
+| `STRIPE_PRICE_ID` | _(required when Pro is enabled)_ | Stripe recurring price ID for the Pro plan |
+
+When `PRO_ENABLED` is not `true`, PageGate runs in free mode: uploads still work, but Clerk auth, Stripe billing, custom URLs, custom expiration, and dashboard APIs are disabled. When `PRO_ENABLED=true`, the server validates the required Pro variables at startup and exits before serving traffic if any are missing.
 
 ## Analytics events (Plausible)
 

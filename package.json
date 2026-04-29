@@ -6,6 +6,9 @@
     "start": "node server/index.js",
     "dev": "node server/index.js"
   },
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "dependencies": {
     "@clerk/express": "^2.0.5",
     "bcrypt": "^5.1.1",

@@ -48,6 +48,14 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stripe_events (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    processed_at TEXT NOT NULL
+  )
+`);
+
 // === Pro tier tables ===
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -139,6 +147,8 @@ const updateUserProStmt = db.prepare(`
   UPDATE users SET is_pro = ?, stripe_customer_id = ?, stripe_subscription_id = ?, pro_expires_at = ? WHERE clerk_id = ?
 `);
 const getUserByStripeCustomerStmt = db.prepare(`SELECT * FROM users WHERE stripe_customer_id = ?`);
+const getStripeEventStmt = db.prepare(`SELECT id FROM stripe_events WHERE id = ?`);
+const insertStripeEventStmt = db.prepare(`INSERT INTO stripe_events (id, type, processed_at) VALUES (?, ?, ?)`);
 const getUserPagesStmt = db.prepare(`
   SELECT id, original_filename, file_size, slug, created_at, expires_at FROM pages WHERE user_id = ? ORDER BY created_at DESC
 `);
@@ -233,6 +243,12 @@ module.exports = {
   },
   getUserByStripeCustomer(stripeCustomerId) {
     return getUserByStripeCustomerStmt.get(stripeCustomerId);
+  },
+  hasProcessedStripeEvent(eventId) {
+    return !!getStripeEventStmt.get(eventId);
+  },
+  markStripeEventProcessed(eventId, type) {
+    return insertStripeEventStmt.run(eventId, type, new Date().toISOString());
   },
   getUserPages(clerkId) {
     return getUserPagesStmt.all(clerkId);

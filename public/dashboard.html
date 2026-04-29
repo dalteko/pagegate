@@ -12,7 +12,7 @@
     async
     crossorigin="anonymous"
     type="text/javascript"
-    src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+    src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5.91.2/dist/clerk.browser.js"
   ></script>
 </head>
 <body>
@@ -128,6 +128,13 @@
         const res = await fetch('/api/pages', {
           headers: { 'Authorization': `Bearer ${token}` },
         });
+        if (res.status === 403) {
+          dashContent.classList.add('hidden');
+          dashAuthRequired.classList.remove('hidden');
+          dashAuthRequired.querySelector('p').textContent = 'Dashboard access requires PageGate Pro.';
+          dashSignInBtn.classList.add('hidden');
+          return;
+        }
         if (!res.ok) return;
         const pages = await res.json();
         renderPages(pages);
