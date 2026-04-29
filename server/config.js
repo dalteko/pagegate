@@ -20,6 +20,19 @@ function validateConfig() {
       `PRO_ENABLED=true requires these environment variables: ${missing.join(', ')}`
     );
   }
+
+  // PAGE_KEY_MASTER must not just be present — it must be the right shape.
+  // Otherwise a malformed key (e.g. typo, wrong base64) silently persists
+  // through startup and only blows up on the first Tier 2/3 upload, which
+  // could be weeks after deploy. Fail at boot instead. We require the
+  // module here (not at top-level) so the free-mode code path doesn't pull
+  // crypto.js into config.js's load order.
+  const { loadMasterKey } = require('./crypto');
+  try {
+    loadMasterKey();
+  } catch (err) {
+    throw new Error(`PAGE_KEY_MASTER is invalid: ${err.message}`);
+  }
 }
 
 validateConfig();
