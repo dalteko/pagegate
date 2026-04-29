@@ -189,16 +189,33 @@ function getRequiredProUser(req, res) {
 // Any signed-in user — Tier 2 or Tier 3. Used by routes shared between
 // account and Pro (dashboard list, password reset). Distinct from
 // getRequiredProUser, which gates Pro-only features (delete, slug, etc.).
-function getRequiredAuthUser(req, res) {
+//
+// Async because we lazy-upsert the local users row from Clerk if it's
+// missing — same logic as `/api/auth/sync`. Without this, a freshly-
+// signed-in user who hits any of these routes before the dashboard's
+// auth-sync round trip lands gets a 404 (PR #10 fixed the equivalent
+// race for the dashboard's /api/me call by switching it to /api/auth/sync;
+// this closes the same gap on the server side so it's fixed once for
+// every route, not per-call site).
+async function getRequiredAuthUser(req, res) {
   const userId = getAuthUserId(req);
   if (!userId) {
     res.status(401).json({ error: 'Not signed in' });
     return null;
   }
-  const user = db.getUser(userId);
+  let user = db.getUser(userId);
   if (!user) {
-    res.status(404).json({ error: 'User not found' });
-    return null;
+    try {
+      const clerkUser = await clerkClient.users.getUser(userId);
+      const email = clerkUser.primaryEmailAddress?.emailAddress
+        || clerkUser.emailAddresses?.find((addr) => addr.id === clerkUser.primaryEmailAddressId)?.emailAddress
+        || null;
+      user = db.getOrCreateUser(userId, email);
+    } catch (err) {
+      console.error('Lazy user upsert failed:', err);
+      res.status(500).json({ error: 'Auth sync failed' });
+      return null;
+    }
   }
   return { userId, user };
 }
@@ -588,8 +605,8 @@ app.post('/api/billing-portal', async (req, res) => {
 // delete by spec); password reset works for both.
 
 // GET /api/pages — list signed-in user's pages
-app.get('/api/pages', (req, res) => {
-  const auth = getRequiredAuthUser(req, res);
+app.get('/api/pages', async (req, res) => {
+  const auth = await getRequiredAuthUser(req, res);
   if (!auth) return;
 
   const isPro = isUserPro(auth.user);
@@ -642,7 +659,7 @@ app.delete('/api/pages/:pageId', (req, res) => {
 // owner so this never reaches them.
 app.patch('/api/pages/:pageId/password', async (req, res) => {
   try {
-    const auth = getRequiredAuthUser(req, res);
+    const auth = await getRequiredAuthUser(req, res);
     if (!auth) return;
 
     const { oldPassword, password } = req.body;
@@ -693,7 +710,7 @@ app.patch('/api/pages/:pageId/password', async (req, res) => {
 // pages, a reset is impossible by design — the key IS the password.
 app.post('/api/pages/:pageId/password/reset', async (req, res) => {
   try {
-    const auth = getRequiredAuthUser(req, res);
+    const auth = await getRequiredAuthUser(req, res);
     if (!auth) return;
 
     const { password } = req.body;
