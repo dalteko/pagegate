@@ -91,6 +91,7 @@ Upload an HTML file with a password.
   - `viewCap` — optional, Pro only: positive integer (defaults to 1,000 for Pro)
 - **Response:** `{ pageId, url, expiresAt, slug }`
 
+
 ### `POST /api/verify/:pageId`
 
 Verify a password and retrieve the decrypted HTML. For public Pro pages, password is not required.
