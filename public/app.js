@@ -151,6 +151,8 @@
   const removeFileBtn = document.getElementById('removeFile');
   const passwordSection = document.getElementById('passwordSection');
   const passwordInput = document.getElementById('passwordInput');
+  const confirmPasswordInput = document.getElementById('confirmPasswordInput');
+  const confirmHint = document.getElementById('confirmHint');
   const generateBtn = document.getElementById('generateBtn');
   const resultSection = document.getElementById('resultSection');
   const linkOutput = document.getElementById('linkOutput');
@@ -158,12 +160,9 @@
   const expirationNote = document.getElementById('expirationNote');
   const resetBtn = document.getElementById('resetBtn');
 
-  const historySection = document.getElementById('historySection');
-  const historyList = document.getElementById('historyList');
-  const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+  // Tier 1 file size cap. Mirror of server/tiers.js — keep these in sync.
+  const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
 
-  const MAX_SIZE = 5 * 1024 * 1024; // 5MB
-  const STORAGE_KEY = 'pagegate_history';
   const pasteSection = document.getElementById('pasteSection');
   const pasteInput = document.getElementById('pasteInput');
   const pasteToggleBtn = document.getElementById('pasteToggleBtn');
@@ -245,7 +244,7 @@
 
     // Validate size
     if (file.size > MAX_SIZE) {
-      fileInfo.textContent = 'File must be under 5MB.';
+      fileInfo.textContent = 'File must be under 10 MB.';
       return;
     }
 
@@ -281,12 +280,26 @@
   // === Generate link ===
   generateBtn.addEventListener('click', async () => {
     const password = passwordInput.value.trim();
+    const confirmPassword = confirmPasswordInput?.value.trim();
     if (!password) {
       passwordInput.style.borderColor = '#EF4444';
       passwordInput.focus();
       return;
     }
+    // Confirm-password is required for anonymous uploads since there's no
+    // recovery — a typo would create a dead page. We always require it
+    // client-side regardless of tier; the server enforces the same rule.
+    if (confirmPasswordInput && password !== confirmPassword) {
+      confirmPasswordInput.style.borderColor = '#EF4444';
+      if (confirmHint) {
+        confirmHint.textContent = 'Passwords do not match';
+        confirmHint.className = 'field-hint field-hint--error';
+      }
+      confirmPasswordInput.focus();
+      return;
+    }
     passwordInput.style.borderColor = '';
+    if (confirmPasswordInput) confirmPasswordInput.style.borderColor = '';
     fileInfo.textContent = '';
 
     generateBtn.disabled = true;
@@ -296,6 +309,7 @@
       const formData = new FormData();
       formData.append('file', currentFile);
       formData.append('password', password);
+      if (confirmPassword !== undefined) formData.append('confirmPassword', confirmPassword);
 
       // Add Pro fields if available
       if (currentUser?.isPro) {
@@ -339,13 +353,9 @@
       // Track upload in Plausible
       if (window.plausible) plausible('Upload', { props: { filename: currentFile.name, size: currentFile.size } });
 
-      // Save to history (no password stored — users should use a password manager)
-      saveToHistory({
-        url: data.url,
-        filename: currentFile.name,
-        createdAt: new Date().toISOString(),
-        expiresAt: data.expiresAt,
-      });
+      // Per the tier-1 spec: no client-side history. The link is shown once
+      // here in the result card, then dismissed. Logged-in users will see
+      // their pages in the server-side dashboard added in Phase 3.
 
       // Show Pro upsell for non-Pro users after upload
       if (clerkInstance && !currentUser?.isPro) {
@@ -395,6 +405,8 @@
     currentFile = null;
     fileInput.value = '';
     passwordInput.value = '';
+    if (confirmPasswordInput) confirmPasswordInput.value = '';
+    if (confirmHint) { confirmHint.textContent = ''; confirmHint.className = 'field-hint'; }
     if (slugInput) slugInput.value = '';
     if (slugHint) { slugHint.textContent = ''; slugHint.className = 'field-hint'; }
     if (expirationSelect) expirationSelect.value = '30';
@@ -412,6 +424,19 @@
     pasteToggleBtn.classList.remove('hidden');
   }
 
+  // Clear the mismatch hint as soon as the user edits either field.
+  confirmPasswordInput?.addEventListener('input', () => {
+    confirmPasswordInput.style.borderColor = '';
+    if (confirmHint) { confirmHint.textContent = ''; confirmHint.className = 'field-hint'; }
+  });
+  passwordInput?.addEventListener('input', () => {
+    if (confirmHint && confirmHint.textContent) {
+      confirmHint.textContent = '';
+      confirmHint.className = 'field-hint';
+    }
+    if (confirmPasswordInput) confirmPasswordInput.style.borderColor = '';
+  });
+
   // Slug validation on input
   slugInput?.addEventListener('input', () => {
     const val = slugInput.value.trim().toLowerCase();
@@ -428,127 +453,10 @@
     }
   });
 
-  // === History (localStorage) ===
-  function getHistory() {
-    try {
-      const history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-      // Migrate: strip any plaintext passwords from older entries
-      let migrated = false;
-      for (const entry of history) {
-        if (entry.password) {
-          delete entry.password;
-          migrated = true;
-        }
-      }
-      if (migrated) localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-      return history;
-    } catch {
-      return [];
-    }
-  }
-
-  function saveToHistory(entry) {
-    const history = getHistory();
-    // Avoid duplicates by URL
-    const filtered = history.filter(h => h.url !== entry.url);
-    filtered.unshift(entry);
-    // Keep max 20 entries
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered.slice(0, 20)));
-    renderHistory();
-  }
-
-  function removeFromHistory(url) {
-    const history = getHistory().filter(h => h.url !== url);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-    renderHistory();
-  }
-
-  function clearHistory() {
-    localStorage.removeItem(STORAGE_KEY);
-    renderHistory();
-  }
-
-  function renderHistory() {
-    const history = getHistory();
-    historyList.innerHTML = '';
-
-    if (history.length === 0) {
-      historySection.classList.add('hidden');
-      return;
-    }
-
-    historySection.classList.remove('hidden');
-    const now = new Date();
-
-    history.forEach(entry => {
-      const item = document.createElement('div');
-      item.className = 'history-item';
-
-      const expires = new Date(entry.expiresAt);
-      const isNever = expires.getFullYear() >= 9999;
-      const daysLeft = Math.ceil((expires - now) / (1000 * 60 * 60 * 24));
-      const isExpired = !isNever && daysLeft <= 0;
-
-      let metaText;
-      if (isNever) {
-        metaText = 'Never expires';
-      } else if (isExpired) {
-        metaText = '<span class="expired">Expired</span>';
-      } else if (daysLeft === 1) {
-        metaText = '1 day left';
-      } else {
-        metaText = `${daysLeft} days left`;
-      }
-
-      item.innerHTML = `
-        <div class="history-item-info">
-          <div class="history-item-name">${escapeHtml(entry.filename)}</div>
-          <div class="history-item-meta">${metaText}</div>
-        </div>
-        <div class="history-item-actions">
-          <button class="btn-icon btn-icon--copy" data-url="${escapeAttr(entry.url)}" title="Copy link">Copy</button>
-          <button class="btn-icon btn-icon--open" data-url="${escapeAttr(entry.url)}" title="Open page">Open</button>
-          <button class="btn-icon btn-icon--delete" data-url="${escapeAttr(entry.url)}" title="Remove">&times;</button>
-        </div>
-      `;
-
-      historyList.appendChild(item);
-    });
-  }
-
-  // Delegated click handler for history actions
-  historyList.addEventListener('click', async (e) => {
-    const btn = e.target.closest('.btn-icon');
-    if (!btn) return;
-
-    if (btn.classList.contains('btn-icon--copy')) {
-      try {
-        await navigator.clipboard.writeText(btn.dataset.url);
-        btn.textContent = 'Copied!';
-        btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
-      } catch { /* ignore */ }
-    } else if (btn.classList.contains('btn-icon--open')) {
-      window.open(btn.dataset.url, '_blank');
-    } else if (btn.classList.contains('btn-icon--delete')) {
-      removeFromHistory(btn.dataset.url);
-    }
-  });
-
-  clearHistoryBtn.addEventListener('click', clearHistory);
-
-  function escapeHtml(str) {
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
-  }
-
-  function escapeAttr(str) {
-    return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
-  // Render on load
-  renderHistory();
+  // Stale localStorage from the old in-page "My Pages" history (removed in
+  // Phase 2 — anonymous links per spec are shown once and not recoverable).
+  // Best-effort cleanup so users don't carry around abandoned data.
+  try { localStorage.removeItem('pagegate_history'); } catch { /* ignore */ }
 
   // === Feedback (submit only — list is private) ===
   const feedbackInput = document.getElementById('feedbackInput');

@@ -115,6 +115,15 @@ function assertStatus(actual, expected, label) {
     pageId = j.pageId;
   });
 
+  await check('Upload rejects mismatched confirm-password (400)', async () => {
+    const form = new FormData();
+    form.append('file', new Blob(['<!doctype html><h1>nope</h1>'], { type: 'text/html' }), 'nope.html');
+    form.append('password', 'one');
+    form.append('confirmPassword', 'two');
+    const r = await fetch(`${base}/api/upload`, { method: 'POST', body: form });
+    assertStatus(r.status, 400, 'POST /api/upload (mismatched confirm)');
+  });
+
   await check('Visit uploaded page URL (password prompt loads)', async () => {
     const r = await fetch(`${base}/${pageId}`);
     assertStatus(r.status, 200, `GET /${pageId}`);

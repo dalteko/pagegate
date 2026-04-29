@@ -95,7 +95,7 @@
       </div>
 
       <button class="btn-paste-toggle" id="pasteToggleBtn">or paste HTML code (mobile-friendly)</button>
-      <p class="upload-tagline">No account needed. Pages expire in 30 days.</p>
+      <p class="upload-tagline" id="uploadTagline">No account needed. Anonymous pages expire in 24 hours.</p>
     </section>
 
     <!-- Preview Section (hidden initially) -->
@@ -136,6 +136,11 @@
         <label for="passwordInput">Set a password</label>
         <input type="password" id="passwordInput" placeholder="Enter a password for this page" autocomplete="off">
       </div>
+      <div class="input-group">
+        <label for="confirmPasswordInput">Confirm password</label>
+        <input type="password" id="confirmPasswordInput" placeholder="Re-enter to confirm" autocomplete="off">
+        <p class="field-hint" id="confirmHint"></p>
+      </div>
       <button class="btn-primary" id="generateBtn">Generate Link</button>
     </section>
 
@@ -154,15 +159,6 @@
         <p>Want custom URLs and longer expiration?</p>
         <button class="btn-go-pro" id="goProBtn2">Go Pro — $5/mo</button>
       </div>
-    </section>
-
-    <!-- History Section (shown if localStorage has items) -->
-    <section class="history-section hidden" id="historySection">
-      <div class="section-header">
-        <h2>My Pages</h2>
-        <button class="btn-text" id="clearHistoryBtn">Clear all</button>
-      </div>
-      <div class="history-list" id="historyList"></div>
     </section>
 
     <!-- Feedback Section -->
