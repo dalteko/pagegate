@@ -222,10 +222,10 @@ const verifyLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Slug validation lives in tiers.js — this is just a thin alias for
-// readability at call sites. The spec rule is "3+ hyphenated word groups,
-// each ≥ 2 chars, lowercase alphanumeric, ≤ 60 chars total".
-const validateSlug = tiers.validateProSlug;
+// Slug validation lives in tiers.js — call `tiers.validateProSlug`
+// directly so there's only ever one function in play. The spec rule is
+// "3+ hyphenated word groups, each ≥ 2 chars, lowercase alphanumeric,
+// ≤ 60 chars total".
 
 // Expiration options for Pro users (in days, 0 = never)
 const EXPIRATION_OPTIONS = { '7': 7, '30': 30, '90': 90, '365': 365, 'never': 0 };
@@ -299,7 +299,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     // Validate slug (Pro only)
     if (slug) {
       if (!isPro) return res.status(403).json({ error: 'Custom URLs require Pro' });
-      const slugError = validateSlug(slug);
+      const slugError = tiers.validateProSlug(slug);
       if (slugError) return res.status(400).json({ error: slugError });
       // Check uniqueness
       const existing = db.getPageBySlug(slug);
