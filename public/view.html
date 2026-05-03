@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PageGate — Someone sent you a protected page</title>
-  <meta name="description" content="This page is password-protected. Enter the password to view it.">
-  <meta property="og:title" content="You've been sent a protected page">
+  <title>PageGate — Someone sent you a private page</title>
+  <meta name="description" content="This page is password-protected. Enter the password to unlock it.">
+  <meta property="og:title" content="You've been sent a private page">
   <meta property="og:description" content="Enter the password to unlock this page on PageGate.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://pagegate.app">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="You've been sent a protected page">
+  <meta name="twitter:title" content="You've been sent a private page">
   <meta name="twitter:description" content="Enter the password to unlock this page on PageGate.">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/style.css">
@@ -21,43 +21,82 @@
   <script id="pageMeta" type="application/json">"__PAGE_META__"</script>
 </head>
 <body>
-  <div class="view-container" id="viewContainer">
-    <div class="view-card" id="promptCard">
-      <a href="/" class="view-logo">PageGate</a>
-      <form id="passwordForm">
-        <div class="input-group">
-          <input type="password" id="passwordInput" placeholder="Enter password" autocomplete="off" autofocus>
-        </div>
-        <button type="submit" class="btn-primary" id="unlockBtn">Unlock</button>
-      </form>
-      <p class="view-error hidden" id="errorMsg"></p>
-    </div>
+  <div class="pgv-page" id="viewShell">
+    <header class="pgv-header" id="viewHeader">
+      <a href="/" class="pgv-mark" aria-label="PageGate home">
+        <span class="pgv-mark-glyph">P.</span>
+        <span class="pgv-mark-word">PageGate</span>
+      </a>
+      <a href="/" class="pgv-header-link">Make your own</a>
+    </header>
 
-    <div class="view-card hidden" id="expiredCard">
-      <a href="/" class="view-logo">PageGate</a>
-      <p class="view-expired" id="expiredCopy">This page is no longer available.</p>
-      <a href="/" class="btn-secondary" style="display:block;text-align:center;text-decoration:none;margin-top:16px;">Go to PageGate</a>
-    </div>
+    <main class="pgv-main" id="viewMain">
+      <!-- Default: password prompt -->
+      <section class="pgv-card" id="promptCard">
+        <p class="pgv-eyebrow">— Private page</p>
+        <h1 class="pgv-card-title">Someone sent you something <em>private</em>.</h1>
+        <p class="pgv-card-sub">Enter the password they shared with you to unlock it. Pages render in a sandboxed frame, isolated from PageGate.</p>
+        <form class="pgv-form" id="passwordForm">
+          <div class="pgv-pw" id="pwField">
+            <label class="pgv-pw-label" for="passwordInput">Password</label>
+            <input type="password" id="passwordInput" placeholder="••••••••••" autocomplete="off" autofocus>
+          </div>
+          <p class="pgv-form-error hidden" id="errorMsg"></p>
+          <button type="submit" class="pgv-submit" id="unlockBtn">
+            <span id="unlockLabel">Unlock</span>
+            <svg width="14" height="12" viewBox="0 0 14 12" fill="none" aria-hidden="true">
+              <path d="M1 6h12M9 2l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </form>
+      </section>
 
-    <footer class="view-footer" id="viewFooter">
-      <span>Hosted on <a href="/">PageGate</a></span>
-      <a href="mailto:abuse@pagegate.io" class="report-link">Report this page</a>
+      <!-- Public-page landing card (no password) -->
+      <section class="pgv-card hidden" id="publicCard">
+        <p class="pgv-eyebrow">— Public page</p>
+        <h1 class="pgv-card-title">A public page is ready to <em>open</em>.</h1>
+        <p class="pgv-card-sub">No password needed. The page is encrypted at rest and rendered in a sandboxed frame.</p>
+        <p class="pgv-card-foot-line" id="publicLoading">Decrypting…</p>
+      </section>
+
+      <!-- Status card: expired / capped / removed / generic error -->
+      <section class="pgv-card hidden" id="statusCard">
+        <p class="pgv-eyebrow" id="statusEyebrow">— Closed</p>
+        <h1 class="pgv-card-title" id="statusTitle"><em>It’s over</em>.</h1>
+        <p class="pgv-card-sub" id="statusCopy">This page is no longer available.</p>
+        <a href="/" class="pgv-card-cta">
+          Make your own
+          <svg width="14" height="12" viewBox="0 0 14 12" fill="none" aria-hidden="true">
+            <path d="M1 6h12M9 2l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
+      </section>
+    </main>
+
+    <footer class="pgv-footer" id="viewFooter">
+      <p>Hosted on <a href="/">PageGate</a> · <a href="mailto:hi@pagegate.app?subject=Report%20PageGate%20page">Report this page</a></p>
     </footer>
   </div>
 
-  <!-- Sandboxed iframe for rendering unlocked content (no same-origin access) -->
-  <iframe id="contentFrame" class="content-frame hidden" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer" style="position:fixed;top:0;left:0;width:100%;height:100%;border:none;background:white;z-index:9999"></iframe>
+  <!-- Sandboxed iframe for rendering unlocked content (no allow-same-origin) -->
+  <iframe id="contentFrame" class="content-frame hidden" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer"></iframe>
 
   <script>
     (() => {
       const pageId = window.location.pathname.slice(1);
       const form = document.getElementById('passwordForm');
       const input = document.getElementById('passwordInput');
+      const pwField = document.getElementById('pwField');
       const errorMsg = document.getElementById('errorMsg');
       const unlockBtn = document.getElementById('unlockBtn');
+      const unlockLabel = document.getElementById('unlockLabel');
       const promptCard = document.getElementById('promptCard');
-      const expiredCard = document.getElementById('expiredCard');
-      const viewContainer = document.getElementById('viewContainer');
+      const publicCard = document.getElementById('publicCard');
+      const statusCard = document.getElementById('statusCard');
+      const statusEyebrow = document.getElementById('statusEyebrow');
+      const statusTitle = document.getElementById('statusTitle');
+      const statusCopy = document.getElementById('statusCopy');
+      const viewShell = document.getElementById('viewShell');
       const contentFrame = document.getElementById('contentFrame');
       const viewFooter = document.getElementById('viewFooter');
 
@@ -70,11 +109,19 @@
         if (parsed && typeof parsed === 'object') pageMeta = parsed;
       } catch { /* placeholder was not replaced — keep defaults */ }
 
-      // Pro pages hide the "Hosted on PageGate" footer.
       if (pageMeta.hideFooter && viewFooter) viewFooter.style.display = 'none';
 
+      function showStatus({ eyebrow, title, copy }) {
+        promptCard.classList.add('hidden');
+        publicCard.classList.add('hidden');
+        statusCard.classList.remove('hidden');
+        if (eyebrow) statusEyebrow.textContent = eyebrow;
+        if (title)   statusTitle.innerHTML = title; // allow <em>
+        if (copy)    statusCopy.textContent = copy;
+      }
+
       function renderHtml(html) {
-        viewContainer.classList.add('hidden');
+        viewShell.classList.add('hidden');
         contentFrame.classList.remove('hidden');
         contentFrame.srcdoc = html;
         if (window.plausible) plausible('Unlock', { props: { page: pageId } });
@@ -83,6 +130,7 @@
       // Public pages: skip the password prompt and auto-fetch on load.
       if (pageMeta.isPublic) {
         promptCard.classList.add('hidden');
+        publicCard.classList.remove('hidden');
         (async () => {
           try {
             const res = await fetch(`/api/verify/${pageId}`, {
@@ -92,29 +140,47 @@
             });
             if (res.ok) {
               renderHtml((await res.json()).html);
+            } else if (res.status === 410) {
+              showStatus({
+                eyebrow: '— View limit reached',
+                title: 'It’s <em>capped</em>.',
+                copy: 'This page hit its view limit. The owner can raise it from their dashboard.',
+              });
+            } else if (res.status === 404) {
+              showStatus({
+                eyebrow: '— Removed',
+                title: '<em>Gone</em>.',
+                copy: 'This page is no longer available.',
+              });
             } else {
-              expiredCard.classList.remove('hidden');
-              const copy = document.getElementById('expiredCopy');
-              if (copy && res.status === 410) copy.textContent = 'This page has reached its view limit.';
+              showStatus({
+                eyebrow: '— Trouble',
+                title: 'Something <em>went wrong</em>.',
+                copy: 'Couldn’t load this page. Please try again in a moment.',
+              });
             }
           } catch {
-            expiredCard.classList.remove('hidden');
+            showStatus({
+              eyebrow: '— Trouble',
+              title: 'Something <em>went wrong</em>.',
+              copy: 'Couldn’t reach PageGate. Please try again in a moment.',
+            });
           }
         })();
         return;
       }
 
-      form.addEventListener('submit', async (e) => {
+      form?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const password = input.value.trim();
         if (!password) {
-          input.style.borderColor = '#EF4444';
+          pwField.classList.add('is-error');
           input.focus();
           return;
         }
 
         unlockBtn.disabled = true;
-        unlockBtn.textContent = 'Unlocking...';
+        unlockLabel.textContent = 'Unlocking…';
         errorMsg.classList.add('hidden');
 
         try {
@@ -125,47 +191,50 @@
           });
 
           if (res.ok) {
-            // Render in sandboxed iframe — no allow-same-origin, so the
-            // uploaded content cannot access PageGate's origin, localStorage,
-            // cookies, or API endpoints.
             renderHtml((await res.json()).html);
           } else if (res.status === 401) {
-            errorMsg.textContent = 'Wrong password';
+            errorMsg.textContent = '— Wrong password.';
             errorMsg.classList.remove('hidden');
-            input.style.borderColor = '#EF4444';
+            pwField.classList.add('is-error');
+            promptCard.classList.add('pgv-card--shake');
+            setTimeout(() => promptCard.classList.remove('pgv-card--shake'), 400);
             input.focus();
             input.select();
             if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'wrong_password' } });
           } else if (res.status === 404) {
-            promptCard.classList.add('hidden');
-            expiredCard.classList.remove('hidden');
+            showStatus({
+              eyebrow: '— Closed',
+              title: '<em>It’s over</em>.',
+              copy: 'This page is no longer available. Expired pages can’t be reopened.',
+            });
             if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'expired' } });
           } else if (res.status === 410) {
-            // Distinct from expiry per the PRD — same shape, different copy.
-            promptCard.classList.add('hidden');
-            expiredCard.classList.remove('hidden');
-            const copy = document.getElementById('expiredCopy');
-            if (copy) copy.textContent = 'This page has reached its view limit.';
+            showStatus({
+              eyebrow: '— View limit reached',
+              title: 'It’s <em>capped</em>.',
+              copy: 'This page hit its view limit. The owner can raise it from their dashboard.',
+            });
             if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'view_cap' } });
           } else if (res.status === 429) {
-            errorMsg.textContent = 'Too many attempts. Try again later.';
+            errorMsg.textContent = '— Too many attempts. Try again later.';
             errorMsg.classList.remove('hidden');
+            pwField.classList.add('is-error');
             if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'rate_limited' } });
           } else {
-            errorMsg.textContent = 'Something went wrong. Please try again.';
+            errorMsg.textContent = '— Something went wrong. Please try again.';
             errorMsg.classList.remove('hidden');
           }
         } catch {
-          errorMsg.textContent = 'Connection error. Please try again.';
+          errorMsg.textContent = '— Connection error. Please try again.';
           errorMsg.classList.remove('hidden');
         } finally {
           unlockBtn.disabled = false;
-          unlockBtn.textContent = 'Unlock';
+          unlockLabel.textContent = 'Unlock';
         }
       });
 
-      input.addEventListener('input', () => {
-        input.style.borderColor = '';
+      input?.addEventListener('input', () => {
+        pwField.classList.remove('is-error');
         errorMsg.classList.add('hidden');
       });
     })();

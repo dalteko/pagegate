@@ -27,7 +27,7 @@ The "fire and forget" tier. Designed for one-off shares.
 
 - Upload flow: pick file → set password → **confirm password** → receive link → done.
 - Once the upload screen is dismissed, the link is not shown again. No history, no recovery.
-- Password is never stored (only its bcrypt hash + the AES key derived from it). If the user forgets it, the page is unrecoverable — by design.
+- Password is never stored (only its bcrypt hash and the PBKDF2 salt are stored). If the user forgets it, the page is unrecoverable — by design.
 - Page expires 24h after upload OR after 300 views, whichever comes first.
 - Random slug only.
 - "Made with PageGate" footer shown.
@@ -39,7 +39,7 @@ The "I want to keep track of what I shared" tier.
 
 - Clerk account required.
 - Dashboard shows: link URL, expiry, view count. **Password is never shown** (not stored in any retrievable form).
-- Password reset: account holder can reset the password from the dashboard without knowing the old one. The server unwraps the page key (server-held), re-derives a new wrapped key from the new password, stores it. (See [Crypto model](#crypto-model).)
+- Password reset: account holder can reset the password from the dashboard without knowing the old one. The page key stays server-wrapped; the server rotates the bcrypt password hash. (See [Crypto model](#crypto-model).)
 - Hard cap of 3 links. At 3, must wait for one to expire (7-day max) before creating another. Cannot manually delete.
 - 1,000-view cap per page.
 - Random slug only. No public pages. No edit-in-place. No analytics.
@@ -49,10 +49,10 @@ The "I want to keep track of what I shared" tier.
 
 Everything Tier 2 has, plus:
 
-- **Custom expiry**: any duration, including no expiry ("forever").
+- **Custom expiry**: preset durations, including no expiry ("forever").
 - **100 links** total.
 - **Custom slugs**: must be 3+ hyphenated word groups, each ≥2 chars, lowercase alphanumeric only, total length ≤60. Example: `kevins-landing-page`. Regex: `^[a-z0-9]{2,}(-[a-z0-9]{2,}){2,}$`. First-come-first-served — no squatting protection.
-- **Reserved namespace** (cannot be claimed): `/api`, `/login`, `/sign-in`, `/sign-up`, `/dashboard`, `/pricing`, `/account`, `/settings`, `/admin`, `/health`, `/webhook`. Extend as new routes are added.
+- **Reserved namespace** (cannot be claimed): `/api`, `/login`, `/sign-in`, `/sign-up`, `/dashboard`, `/pricing`, `/account`, `/settings`, `/admin`, `/health`, `/webhook`, `/privacy`, `/terms`, `/favicon`, `/style`, `/app`. Extend as new routes are added.
 - **Public pages**: option to skip the password entirely. Page is just a link, anyone with the URL can view. Server-held key.
 - **Per-link view caps**: user-configurable, default 1,000.
 - **Edit-in-place**: replace HTML, change password, change expiry, change slug after upload.
@@ -87,15 +87,15 @@ First-come-first-served. No reservation/squatting protection.
 
 ## Crypto model
 
-| Tier | Server can decrypt content? | Mechanism |
+| Tier | Server can decrypt stored content without the page password? | Mechanism |
 |---|---|---|
-| Tier 1 | **No** | AES key derived from page password via PBKDF2; password never stored. Forgotten = lost. Genuinely zero-knowledge. |
+| Tier 1 | **No** | AES key derived from page password via PBKDF2; password never stored. Forgotten = lost. |
 | Tier 2 | **Yes** (UX-gated) | Page key is server-held (encrypted at rest with a server master key). Password is bcrypt-verified to gate access; reset works without old password. |
 | Tier 3 | **Yes** (UX-gated) | Same as Tier 2 for password-protected pages. Public pages have no password gate at all. |
 
-The current README claim ("the server cannot read uploaded content without the password") is only true for Tier 1. Marketing/README copy needs to be honest:
+A previous README claim ("the server cannot read uploaded content without the password") is only true for Tier 1. Marketing/README copy needs to be honest:
 
-> *"Anonymous uploads are end-to-end encrypted — even we can't read them. Account uploads are encrypted at rest and protected by your account password, recoverable if you lose the password."*
+> *"Anonymous stored pages use password-derived encryption — without the page password, they cannot be recovered. Account uploads are encrypted at rest with a server-wrapped page key, which enables dashboard recovery and password reset but is not zero-knowledge."*
 
 ---
 

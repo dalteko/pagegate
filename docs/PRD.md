@@ -58,7 +58,7 @@ The full tier breakdown is in [TIERS.md](./TIERS.md). Headline requirements:
 - 1-day expiry, 300-view cap, 10 MB file limit.
 - Confirm-password on upload (typo = dead page otherwise).
 - Link shown once, never recoverable.
-- Genuinely zero-knowledge: server cannot read content without the user's password.
+- Stored anonymous pages are password-derived: without the page password, PageGate cannot recover or decrypt them at rest.
 
 ### Tier 2 — Free, account
 - 7-day fixed expiry, 3 links max (no delete), 1,000-view cap.
@@ -83,9 +83,9 @@ The full tier breakdown is in [TIERS.md](./TIERS.md). Headline requirements:
 
 ## Privacy & honest copy
 
-The current README states *"the server cannot read uploaded content without the password."* That's only true for Tier 1 under the new model. The README and any public-facing copy must be revised to:
+A previous README stated *"the server cannot read uploaded content without the password."* That's only true for Tier 1 under the new model. The README and any public-facing copy must be revised to:
 
-> *"Anonymous uploads are end-to-end encrypted — even we can't read them. Account uploads are encrypted at rest and protected by your account password, recoverable if you lose the password."*
+> *"Anonymous stored pages use password-derived encryption — without the page password, they cannot be recovered. Account uploads are encrypted at rest with a server-wrapped page key, which enables dashboard recovery and password reset but is not zero-knowledge."*
 
 This trade-off is intentional. Account users want recovery; recovery requires server-held keys; that breaks zero-knowledge. We don't pretend otherwise.
 

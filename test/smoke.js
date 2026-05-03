@@ -158,6 +158,15 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     assertStatus(r.status, 400, 'POST /api/upload (mismatched confirm)');
   });
 
+  await check('Upload rejects files over 10 MB (413)', async () => {
+    const form = new FormData();
+    const oversized = new Blob([Buffer.alloc(10 * 1024 * 1024 + 1, '<')], { type: 'text/html' });
+    form.append('file', oversized, 'too-big.html');
+    form.append('password', password);
+    const r = await fetch(`${base}/api/upload`, { method: 'POST', body: form });
+    assertStatus(r.status, 413, 'POST /api/upload (file too large)');
+  });
+
   await check('Visit uploaded page URL (password prompt loads + meta injected)', async () => {
     const r = await fetch(`${base}/${pageId}`);
     assertStatus(r.status, 200, `GET /${pageId}`);

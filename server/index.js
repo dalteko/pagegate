@@ -240,6 +240,17 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_BYTES },
 });
 
+function uploadHtmlFile(req, res, next) {
+  upload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'File must be under 10 MB.' });
+    }
+    console.error('Upload middleware error:', err);
+    return res.status(400).json({ error: 'Upload failed' });
+  });
+}
+
 function findLivePage(pageIdOrSlug) {
   let page = db.getPage(pageIdOrSlug);
   if (!page) page = db.getPageBySlug(pageIdOrSlug);
@@ -276,7 +287,7 @@ const verifyLimiter = rateLimit({
 const EXPIRATION_OPTIONS = { '7': 7, '30': 30, '90': 90, '365': 365, 'never': 0 };
 
 // POST /api/upload — upload HTML file + password
-app.post('/api/upload', upload.single('file'), async (req, res) => {
+app.post('/api/upload', uploadHtmlFile, async (req, res) => {
   try {
     const file = req.file;
     const password = req.body.password;
@@ -785,8 +796,8 @@ app.post('/api/pages/:pageId/password/reset', async (req, res) => {
 // downgrade enforcement. Accepted only during the grace window or while
 // Pro is still active (so the user can pre-select before grace begins).
 // Body: { keep: boolean }.
-app.post('/api/pages/:pageId/keep', (req, res) => {
-  const auth = getRequiredAuthUser(req, res);
+app.post('/api/pages/:pageId/keep', async (req, res) => {
+  const auth = await getRequiredAuthUser(req, res);
   if (!auth) return;
 
   const page = db.getPageById(req.params.pageId);
@@ -821,7 +832,7 @@ app.post('/api/pages/:pageId/keep', (req, res) => {
 //                 from now.
 //   isPublic    — 'true' / 'false'. Toggles password gating.
 //   viewCap     — positive integer or '' to clear (fall back to default).
-app.patch('/api/pages/:pageId', upload.single('file'), async (req, res) => {
+app.patch('/api/pages/:pageId', uploadHtmlFile, async (req, res) => {
   try {
     const auth = getRequiredProUser(req, res);
     if (!auth) return;

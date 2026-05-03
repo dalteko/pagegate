@@ -27,15 +27,15 @@ Password-protected HTML page sharing in three tiers — anonymous, free account,
 
 PageGate runs **two distinct encryption paths** by tier. The trade-off is intentional and called out in the privacy policy.
 
-- **Anonymous uploads are end-to-end encrypted.** The AES-256-GCM key is derived from the page password via PBKDF2 (100k iterations). The password is bcrypt-hashed for verification, but never stored in any reversible form. We genuinely cannot read your content. Forgotten password = unrecoverable, by design.
-- **Account uploads (free or Pro) are encrypted at rest with a server-held master key.** A random per-page key is generated, wrapped with the `PAGE_KEY_MASTER` env var, and stored in the database. This is what makes account-driven password reset and Pro edit-in-place possible. The honest trade-off: the operator could decrypt account content with the master key, where the anonymous tier they cannot.
+- **Anonymous uploads use password-derived encryption at rest.** The AES-256-GCM key is derived from the page password via PBKDF2 (100k iterations). The password is bcrypt-hashed for verification, but never stored in any reversible form. Without that password, the stored page cannot be recovered. Forgotten password = unrecoverable, by design.
+- **Account uploads (free or Pro) are encrypted at rest with a server-held master key.** A random per-page key is generated, wrapped with the `PAGE_KEY_MASTER` env var, and stored in the database. This is what makes account-driven password reset and Pro edit-in-place possible. The honest trade-off: account content is not zero-knowledge; the operator could decrypt it with the master key.
 
 Other security properties — uniform across tiers:
 
 - **Sandboxed rendering** — Unlocked pages render in a sandboxed iframe (`sandbox="allow-scripts allow-forms allow-popups"`, no `allow-same-origin`). Uploaded HTML cannot access PageGate's cookies, localStorage, or API endpoints.
 - **Password hashing** — All page passwords are bcrypt-hashed (10 salt rounds) for verification. Anonymous pages additionally derive their encryption key from the password.
 - **Rate limiting** — 10 password attempts per IP per page per hour.
-- **Auto-expiration** — Expired pages are removed from both the database and disk every 24 hours.
+- **Auto-expiration** — Expired pages are removed from the active database and disk by scheduled cleanup, so removal after expiry may not be instant.
 - **Per-page view cap** — Pages lock once they hit their view limit (300 anonymous, 1,000 free, configurable for Pro). Same UX as expiry, distinct copy.
 
 ## Tech stack
@@ -46,7 +46,7 @@ Other security properties — uniform across tiers:
 - **Auth:** Clerk for accounts, bcrypt for page passwords, PBKDF2 / master-key wrap for content encryption
 - **Billing:** Stripe (Pro subscriptions, Customer Portal for management)
 - **Frontend:** Vanilla HTML/CSS/JS (no framework)
-- **Analytics:** Plausible (privacy-friendly, no cookies, site-only — never on uploaded pages)
+- **Analytics:** Plausible (privacy-friendly, no cookies, PageGate shell only — never injected into uploaded HTML)
 - **Hosting:** Railway
 
 ## Project structure
