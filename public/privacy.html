@@ -46,7 +46,7 @@
       <p>Anonymous uploads use a password-derived key. Account and Pro uploads are encrypted at rest with a server-wrapped page key so dashboard recovery, password reset, public pages, and Pro editing can work.</p>
 
       <h2 id="what-we-collect">What we collect</h2>
-      <p>When you upload a page, we store the encrypted page file, original filename, file size, creation time, expiration time, total view count, last-viewed time, optional custom URL, optional view limit, public/private setting, tier at creation, and a one-way password hash when the page has a password gate.</p>
+      <p>When you upload a page, we store the encrypted page file, original filename, file size, creation time, expiration time, total view count, last-viewed time, optional custom URL, public/private setting, tier at creation, and a one-way password hash when the page has a password gate.</p>
       <p>If you create an account, we store your email address, Clerk user ID, subscription status, and the pages connected to your account.</p>
       <p>If you use Pro, billing is handled by Stripe. We store the Stripe customer and subscription identifiers needed to know whether Pro features are active.</p>
 
@@ -62,14 +62,14 @@
       <h2 id="encryption">Encryption</h2>
       <p>Anonymous pages use an AES-256-GCM key derived from the page password with PBKDF2. We do not store the page password. If you lose it, we cannot recover the page for you.</p>
       <p>Account and Pro pages use a random per-page key wrapped by a server-held master key. This is what makes password reset, dashboard recovery, public pages, and Pro edit-in-place possible. It is not the same zero-knowledge guarantee as anonymous uploads.</p>
-      <p>Public Pro pages skip the password prompt, not encryption. Anyone with the link can view a public page until it expires, is deleted, or reaches its view limit.</p>
+      <p>Public pages skip the password prompt, not encryption. Anyone with the link can view a public page until it expires or is deleted.</p>
 
       <h2 id="analytics">Analytics and logs</h2>
       <p>We may use privacy-friendly aggregate analytics in the PageGate shell to understand product usage, such as uploads, unlocks, failed unlocks, page paths, file names, or file sizes. We do not place analytics code inside the uploaded HTML itself.</p>
       <p>We may keep limited technical logs for security, abuse prevention, debugging, and reliability. Those logs may include ordinary request metadata such as timestamps, IP addresses, user agents, routes, and error details. We do not use those logs to build viewer profiles.</p>
 
       <h2 id="retention">Retention</h2>
-      <p>Anonymous pages expire after 1 day or 300 views, whichever comes first. Free account pages expire after 7 days or 1,000 views, whichever comes first. Pro pages can use custom expirations, including “never,” subject to account status and the service continuing to operate.</p>
+      <p>Anonymous pages expire after 1 day. Free account pages expire after 7 days. Pro pages can use custom expirations, including “never,” subject to account status and the service continuing to operate.</p>
       <p>When a page expires, PageGate removes the active database record and encrypted file through scheduled cleanup. That cleanup runs periodically, so removal after expiry may not be instant.</p>
       <p>When an owner deletes a Pro page, PageGate removes the active database record and encrypted file immediately. Limited records may remain temporarily in logs, backups, provider systems, or records we reasonably need for security, billing, abuse prevention, or legal compliance.</p>
 
