@@ -186,10 +186,13 @@ function getRequiredProUser(req, res) {
   return { userId, user };
 }
 
-// Multer: memory storage, 5MB limit
+// Multer: memory storage. File size cap is 10 MB across all tiers — see
+// tiers.js / TIERS.md for the rationale (rich HTML pages are well under
+// 1 MB; only base64-embedded media exceeds 10 MB and that's an anti-pattern).
+const MAX_FILE_BYTES = tiers.RULES[tiers.TIER.ANONYMOUS].fileSizeMb * 1024 * 1024;
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: MAX_FILE_BYTES },
 });
 
 // Rate limiter for password verification: 10 attempts per IP per page per hour
@@ -222,11 +225,19 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   try {
     const file = req.file;
     const password = req.body.password;
+    const confirmPassword = req.body.confirmPassword;
     const slug = req.body.slug?.trim().toLowerCase();
     const expiration = req.body.expiration;
 
     if (!file) return res.status(400).json({ error: 'No file provided' });
     if (!password || !password.trim()) return res.status(400).json({ error: 'Password is required' });
+    // Confirm-password is required for the anonymous flow (a typo otherwise
+    // creates a dead page since there's no recovery). Server-side check
+    // mirrors the client validation; backward-compatible for any caller
+    // that omits the field — only enforced when supplied.
+    if (confirmPassword !== undefined && confirmPassword !== password) {
+      return res.status(400).json({ error: 'Passwords do not match' });
+    }
 
     // Validate HTML file
     const ext = path.extname(file.originalname).toLowerCase();
@@ -250,7 +261,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       if (existing) return res.status(409).json({ error: 'This URL is already taken' });
     }
 
-    // Calculate expiration
+    // Tier-driven default expiry. Anonymous gets 1 day per tiers.js;
+    // logged-in non-Pro keeps the legacy 30-day default until Phase 3
+    // tightens it to 7. Pro picks from EXPIRATION_OPTIONS.
     const now = new Date();
     let expiresAt;
     if (expiration && expiration !== '30') {
@@ -261,7 +274,12 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         ? new Date('9999-12-31T23:59:59.999Z') // "never" = far future
         : new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
     } else {
-      expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      // The pre-tier default was 30 days for everyone. Anonymous now uses
+      // the tier rule (1 day). Logged-in non-Pro stays at 30 until Phase 3.
+      const defaultDays = !user
+        ? tiers.RULES[tiers.TIER.ANONYMOUS].expiryDays
+        : 30;
+      expiresAt = new Date(now.getTime() + defaultDays * 24 * 60 * 60 * 1000);
     }
 
     const pageId = crypto.randomBytes(6).toString('base64url').slice(0, 8);
@@ -336,8 +354,19 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
     const match = await bcrypt.compare(password, page.password_hash);
     if (!match) return res.status(401).json({ error: 'Wrong password' });
 
+    // View-cap enforcement. The per-page `view_cap` column wins if set
+    // (Pro custom caps); otherwise fall back to the tier rule. A null cap
+    // means unlimited.
+    const tierAtCreation = page.tier_at_creation || tiers.TIER.ANONYMOUS;
+    const cap = page.view_cap ?? tiers.RULES[tierAtCreation].viewCap;
+    if (cap !== null && cap !== undefined && (page.view_count || 0) >= cap) {
+      return res.status(410).json({ error: 'View limit reached', reason: 'view_cap' });
+    }
+
     const html = decryptPage(page, password);
     if (!html) return res.status(404).json({ error: 'Page file not found' });
+
+    db.incrementViewCount(page.id);
 
     res.json({ html });
   } catch (err) {

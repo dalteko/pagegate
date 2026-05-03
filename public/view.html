@@ -31,7 +31,7 @@
 
     <div class="view-card hidden" id="expiredCard">
       <a href="/" class="view-logo">PageGate</a>
-      <p class="view-expired">This page is no longer available.</p>
+      <p class="view-expired" id="expiredCopy">This page is no longer available.</p>
       <a href="/" class="btn-secondary" style="display:block;text-align:center;text-decoration:none;margin-top:16px;">Go to PageGate</a>
     </div>
 
@@ -96,6 +96,13 @@
             promptCard.classList.add('hidden');
             expiredCard.classList.remove('hidden');
             if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'expired' } });
+          } else if (res.status === 410) {
+            // Distinct from expiry per the PRD — same shape, different copy.
+            promptCard.classList.add('hidden');
+            expiredCard.classList.remove('hidden');
+            const copy = document.getElementById('expiredCopy');
+            if (copy) copy.textContent = 'This page has reached its view limit.';
+            if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'view_cap' } });
           } else if (res.status === 429) {
             errorMsg.textContent = 'Too many attempts. Try again later.';
             errorMsg.classList.remove('hidden');
