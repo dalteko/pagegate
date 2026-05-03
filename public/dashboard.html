@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dashboard — PageGate</title>
+  <title>Your pages — PageGate</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="style.css">
   <script
@@ -16,45 +16,113 @@
   ></script>
 </head>
 <body>
-  <div class="container">
-    <header class="dash-header">
-      <a href="/" class="logo-link">PageGate</a>
-      <span class="pro-badge hidden" id="dashProBadge">PRO</span>
+  <div class="pg-dash" id="dashShell">
+    <header class="pg-dash-header">
+      <div class="pg-dash-header-inner">
+        <a class="pg-mark" href="/"><span class="dot"></span>PageGate</a>
+        <div class="pg-dash-header-right">
+          <span class="pg-tier-chip hidden" id="dashTierChip">Free</span>
+          <a class="btn-pill btn-pill--ghost" href="/" id="newPageBtn">New page</a>
+          <button class="btn-pill btn-pill--ghost hidden" id="dashManageBtn" type="button">Manage billing</button>
+          <button class="rb-cta hidden" id="dashGoProBtn" type="button">Go Pro · $5/mo</button>
+          <span class="auth-user hidden" id="dashAuthUser">
+            <img class="auth-avatar" id="dashAuthAvatar" src="" alt="">
+            <button class="btn-text" id="dashSignOutBtn" type="button">Sign out</button>
+          </span>
+        </div>
+      </div>
     </header>
 
-    <div class="dash-loading" id="dashLoading">Loading...</div>
-
-    <div class="dash-auth-required hidden" id="dashAuthRequired">
-      <p>Sign in to access your dashboard.</p>
-      <button class="btn-primary" id="dashSignInBtn" style="max-width:300px;margin:16px auto;">Sign in with Google</button>
+    <!-- Pro downgrade grace banner. Shown only when /api/me reports inGrace. -->
+    <div class="pg-grace hidden" id="graceBanner">
+      <div class="pg-grace-inner">
+        <div>
+          <p class="pg-grace-eyebrow">— Pro lapsed</p>
+          <p class="pg-grace-title" id="graceTitle"></p>
+          <p class="pg-grace-meta" id="graceMeta"></p>
+        </div>
+        <div class="pg-grace-actions">
+          <button class="btn-pill btn-pill--accent" id="graceRenewBtn" type="button">Renew Pro</button>
+        </div>
+      </div>
     </div>
 
-    <div class="dash-content hidden" id="dashContent">
-      <!-- Pro downgrade grace banner. Shown only when /api/me reports inGrace. -->
-      <div class="grace-banner hidden" id="graceBanner">
-        <p class="grace-banner-text" id="graceBannerText"></p>
-        <p class="grace-banner-meta" id="graceBannerMeta"></p>
+    <main class="pg-dash-main" id="dashMain">
+      <div class="pg-dash-section-header">
+        <h1 class="pg-dash-h1">Your pages.</h1>
+        <div class="pg-dash-section-meta">
+          <p class="pg-dash-section-count" id="dashCount"></p>
+        </div>
       </div>
 
-      <div class="section-header">
-        <h2>My Pages</h2>
-        <a href="/" class="btn-text">Upload new</a>
+      <!-- Loading skeleton — shown until /api/pages resolves. -->
+      <ul class="pg-loading" id="dashLoading">
+        <li class="pg-loading-row"><span class="pg-loading-bar med"></span><span class="pg-loading-bar short"></span></li>
+        <li class="pg-loading-row"><span class="pg-loading-bar med"></span><span class="pg-loading-bar short"></span></li>
+        <li class="pg-loading-row"><span class="pg-loading-bar med"></span><span class="pg-loading-bar short"></span></li>
+      </ul>
+
+      <!-- Auth required (Clerk not signed in) -->
+      <div class="pg-auth-required hidden" id="dashAuthRequired">
+        <p>Sign in to see <em style="font-style:italic;color:var(--rb-accent)">your pages</em>.</p>
+        <p class="pg-auth-required-sub">A free account gives you a dashboard, 7-day expirations, and 1,000 views per page.</p>
+        <button class="rb-cta" id="dashSignInBtn" type="button">Sign in</button>
       </div>
 
-      <div class="dash-empty hidden" id="dashEmpty">
-        <p>No pages yet. <a href="/">Upload your first page</a>.</p>
+      <!-- Error banner (list-load failure) -->
+      <div class="pg-error-banner hidden" id="dashErrorBanner">
+        <strong>List failed</strong>
+        <span>Couldn’t load your pages. <button class="pg-error-banner-retry" id="dashRetryBtn" type="button">Try again</button></span>
       </div>
 
-      <div class="dash-pages" id="dashPages"></div>
-    </div>
+      <!-- Empty state -->
+      <div class="pg-empty hidden" id="dashEmpty">
+        <div class="pg-empty-glyph">
+          <div class="pg-empty-page">
+            <span class="pg-empty-page-line"></span>
+            <span class="pg-empty-page-line short"></span>
+            <span class="pg-empty-page-line"></span>
+            <span class="pg-empty-page-line short"></span>
+            <span class="pg-empty-page-lock">
+              <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M8 11V8a4 4 0 0 1 8 0v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </span>
+          </div>
+        </div>
+        <h2 class="pg-empty-title">Nothing here yet.</h2>
+        <p class="pg-empty-sub">Drop in an HTML file and it’ll show up here behind a password.</p>
+        <a href="/" class="rb-cta">Upload your first page</a>
+      </div>
 
-    <!-- Edit-in-place modal (Pro only). All fields optional — submit only what changed. -->
-    <div class="modal-overlay hidden" id="editModal">
-      <div class="modal-card">
+      <!-- The list itself -->
+      <ul class="pg-pages hidden" id="dashPages"></ul>
+    </main>
+
+    <footer class="rb-foot">
+      <h2 class="rb-foot-brand">Page<em>Gate</em>.</h2>
+      <div class="rb-foot-meta">
+        <div class="rb-foot-links">
+          <a href="/privacy.html">Privacy</a>
+          <span class="rb-foot-sep">·</span>
+          <a href="/terms.html">Terms</a>
+          <span class="rb-foot-sep">·</span>
+          <a href="https://github.com/dalteko/pagegate" target="_blank" rel="noopener">GitHub</a>
+        </div>
+        <span>© PageGate 2026</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Edit-in-place sheet (Pro only). All fields optional — submit only what changed. -->
+  <div class="modal-overlay hidden" id="editModal">
+    <div class="modal-card">
+      <div class="modal-header">
         <h3>Edit page</h3>
-        <p class="modal-note">Fields are prefilled with the current values. Clearing the slug or view limit removes the custom value (the slug reverts to the random URL, the view limit reverts to the tier default).</p>
+        <button class="modal-close" id="editCloseBtn" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="modal-note">Fields are prefilled with the current values. Clearing the slug or view limit removes the custom value (the URL reverts to a random nanoid; the cap reverts to the tier default).</p>
+      <div class="modal-body">
         <div class="input-group">
-          <label for="editFileInput">Replace HTML</label>
+          <label for="editFileInput">Replace HTML <span class="label-hint">optional</span></label>
           <input type="file" id="editFileInput" accept=".html,.htm">
           <p class="field-hint" id="editFileHint">Choose a new .html file to replace the page contents.</p>
         </div>
@@ -68,7 +136,7 @@
         </div>
         <div class="input-group">
           <label for="editExpirationSelect">Expiration</label>
-          <select id="editExpirationSelect" class="select-input">
+          <select id="editExpirationSelect">
             <option value="">Keep current</option>
             <option value="7">7 days from now</option>
             <option value="30">30 days from now</option>
@@ -80,29 +148,34 @@
         <div class="input-group">
           <label for="editViewCapInput">View limit</label>
           <input type="number" id="editViewCapInput" min="1" placeholder="1000" autocomplete="off">
-          <p class="field-hint">Leave blank to clear the cap.</p>
+          <p class="field-hint">Leave blank to clear the cap and fall back to the Pro default.</p>
         </div>
         <div class="input-group">
           <label class="checkbox-label">
             <input type="checkbox" id="editIsPublicInput">
-            <span>Public page (no password)</span>
+            <span>Public page <span class="label-hint">no password</span></span>
           </label>
         </div>
         <p class="modal-error hidden" id="editModalError"></p>
-        <div class="modal-actions">
-          <button class="btn-secondary" id="editCancelBtn" style="width:auto;padding:10px 20px;">Cancel</button>
-          <button class="btn-primary" id="editSaveBtn" style="width:auto;padding:10px 20px;">Save changes</button>
-        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="editCancelBtn" type="button">Cancel</button>
+        <button class="btn-primary" id="editSaveBtn" type="button" style="margin-top:0">Save changes</button>
       </div>
     </div>
+  </div>
 
-    <!-- Password update modal — works in two modes:
-         (a) reset (no old password needed) for wrapped-key pages, and
-         (b) change (old password required) for legacy password-derived pages. -->
-    <div class="modal-overlay hidden" id="passwordModal">
-      <div class="modal-card">
+  <!-- Password update modal — works in two modes:
+       (a) reset (no old password needed) for wrapped-key pages, and
+       (b) change (old password required) for legacy password-derived pages. -->
+  <div class="modal-overlay hidden" id="passwordModal">
+    <div class="modal-card">
+      <div class="modal-header">
         <h3 id="modalTitle">Reset password</h3>
-        <p class="modal-note" id="modalNote">Set a new password for this page. Anyone with the link will need the new password to view it.</p>
+        <button class="modal-close" id="modalCloseBtn" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="modal-note" id="modalNote">Set a new password for this page. Anyone with the link will need the new password to view it.</p>
+      <div class="modal-body">
         <div class="input-group hidden" id="oldPasswordGroup">
           <label for="oldPasswordInput">Current password</label>
           <input type="password" id="oldPasswordInput" placeholder="Enter current password" autocomplete="off">
@@ -112,10 +185,10 @@
           <input type="password" id="newPasswordInput" placeholder="Enter new password" autocomplete="off">
         </div>
         <p class="modal-error hidden" id="modalError"></p>
-        <div class="modal-actions">
-          <button class="btn-secondary" id="modalCancelBtn" style="width:auto;padding:10px 20px;">Cancel</button>
-          <button class="btn-primary" id="modalSaveBtn" style="width:auto;padding:10px 20px;">Save</button>
-        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="modalCancelBtn" type="button">Cancel</button>
+        <button class="btn-primary" id="modalSaveBtn" type="button" style="margin-top:0">Save</button>
       </div>
     </div>
   </div>
@@ -123,29 +196,40 @@
   <script>
   (() => {
     let clerkInstance = null;
-
     async function getToken() {
       return clerkInstance?.session?.getToken() || null;
     }
 
+    const dashShell = document.getElementById('dashShell');
     const dashLoading = document.getElementById('dashLoading');
     const dashAuthRequired = document.getElementById('dashAuthRequired');
-    const dashContent = document.getElementById('dashContent');
+    const dashErrorBanner = document.getElementById('dashErrorBanner');
+    const dashRetryBtn = document.getElementById('dashRetryBtn');
     const dashEmpty = document.getElementById('dashEmpty');
     const dashPages = document.getElementById('dashPages');
-    const dashSignInBtn = document.getElementById('dashSignInBtn');
+    const dashCount = document.getElementById('dashCount');
 
-    const dashProBadge = document.getElementById('dashProBadge');
+    const dashTierChip = document.getElementById('dashTierChip');
+    const dashGoProBtn = document.getElementById('dashGoProBtn');
+    const dashManageBtn = document.getElementById('dashManageBtn');
+    const dashSignInBtn = document.getElementById('dashSignInBtn');
+    const dashSignOutBtn = document.getElementById('dashSignOutBtn');
+    const dashAuthUser = document.getElementById('dashAuthUser');
+    const dashAuthAvatar = document.getElementById('dashAuthAvatar');
+
     const graceBanner = document.getElementById('graceBanner');
-    const graceBannerText = document.getElementById('graceBannerText');
-    const graceBannerMeta = document.getElementById('graceBannerMeta');
+    const graceTitle = document.getElementById('graceTitle');
+    const graceMeta = document.getElementById('graceMeta');
+    const graceRenewBtn = document.getElementById('graceRenewBtn');
 
     // Captured from /api/me on each load. Drives the Keep toggle and
     // the survivor counter rendered inside the banner.
     let graceState = { inGrace: false, graceEndsAt: null, graceKeepLimit: 3 };
+    let currentMe = null;
 
-    // Edit modal
+    // Edit modal state
     const editModal = document.getElementById('editModal');
+    const editCloseBtn = document.getElementById('editCloseBtn');
     const editFileInput = document.getElementById('editFileInput');
     const editSlugInput = document.getElementById('editSlugInput');
     const editSlugHint = document.getElementById('editSlugHint');
@@ -157,7 +241,9 @@
     const editSaveBtn = document.getElementById('editSaveBtn');
     let editingTargetId = null;
 
+    // Password modal state
     const passwordModal = document.getElementById('passwordModal');
+    const modalCloseBtn = document.getElementById('modalCloseBtn');
     const oldPasswordInput = document.getElementById('oldPasswordInput');
     const newPasswordInput = document.getElementById('newPasswordInput');
     const oldPasswordGroup = document.getElementById('oldPasswordGroup');
@@ -167,45 +253,100 @@
     const modalCancelBtn = document.getElementById('modalCancelBtn');
     const modalSaveBtn = document.getElementById('modalSaveBtn');
     let editingPageId = null;
-    // 'reset' (no old password — wrapped-key pages) or 'change' (with old password — legacy)
-    let editingMode = 'reset';
+    let editingMode = 'reset'; // 'reset' (wrapped-key) | 'change' (legacy)
 
     async function initClerk() {
       const scriptTag = document.getElementById('clerk-script');
       const publishableKey = scriptTag?.getAttribute('data-clerk-publishable-key');
       if (!publishableKey) {
-        dashLoading.textContent = 'Auth not configured';
+        showAuthRequired('Auth not configured.');
         return;
       }
-
       await new Promise((resolve) => {
         if (window.Clerk) return resolve();
         scriptTag.addEventListener('load', resolve);
       });
-
       clerkInstance = window.Clerk;
       await clerkInstance.load();
-
       clerkInstance.addListener(handleAuthChange);
       handleAuthChange();
     }
 
+    function showAuthRequired() {
+      dashLoading.classList.add('hidden');
+      dashEmpty.classList.add('hidden');
+      dashPages.classList.add('hidden');
+      dashErrorBanner.classList.add('hidden');
+      dashAuthRequired.classList.remove('hidden');
+      dashAuthUser.classList.add('hidden');
+      dashTierChip.classList.add('hidden');
+      dashGoProBtn.classList.add('hidden');
+      dashManageBtn.classList.add('hidden');
+      dashCount.textContent = '';
+    }
+
     function handleAuthChange() {
-      if (clerkInstance.user) {
-        dashLoading.classList.add('hidden');
+      const user = clerkInstance?.user;
+      if (user) {
         dashAuthRequired.classList.add('hidden');
-        dashContent.classList.remove('hidden');
+        dashAuthUser.classList.remove('hidden');
+        if (dashAuthAvatar) dashAuthAvatar.src = user.imageUrl || '';
         loadPages();
       } else {
-        dashLoading.classList.add('hidden');
-        dashContent.classList.add('hidden');
-        dashAuthRequired.classList.remove('hidden');
+        showAuthRequired();
       }
     }
 
     dashSignInBtn?.addEventListener('click', () => clerkInstance?.openSignIn());
+    dashSignOutBtn?.addEventListener('click', () => clerkInstance?.signOut());
+    dashRetryBtn?.addEventListener('click', () => loadPages());
+    dashGoProBtn?.addEventListener('click', () => startCheckout());
+    graceRenewBtn?.addEventListener('click', () => startCheckout());
+    dashManageBtn?.addEventListener('click', () => openBillingPortal());
+
+    async function startCheckout() {
+      if (!clerkInstance?.user) {
+        clerkInstance?.openSignIn();
+        return;
+      }
+      try {
+        const token = await getToken();
+        const res = await fetch('/api/checkout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.url) window.location.href = data.url;
+      } catch (e) {
+        console.error('Checkout failed:', e);
+      }
+    }
+
+    async function openBillingPortal() {
+      try {
+        const token = await getToken();
+        const res = await fetch('/api/billing-portal', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.url) window.location.href = data.url;
+      } catch (e) {
+        console.error('Billing portal failed:', e);
+      }
+    }
 
     async function loadPages() {
+      dashErrorBanner.classList.add('hidden');
+      dashEmpty.classList.add('hidden');
+      dashPages.classList.add('hidden');
+      dashLoading.classList.remove('hidden');
       try {
         const token = await getToken();
         // Ensure a local user row exists before reading /api/me. Users who
@@ -221,23 +362,49 @@
         const meRes = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
         if (meRes.ok) {
           const me = await meRes.json();
-          if (me.isPro && !me.inGrace) dashProBadge.classList.remove('hidden');
-          else dashProBadge.classList.add('hidden');
+          currentMe = me;
+          renderTierChip(me);
           graceState = {
             inGrace: !!me.inGrace,
             graceEndsAt: me.graceEndsAt || null,
             graceKeepLimit: me.graceKeepLimit || 3,
           };
         }
-        const res = await fetch('/api/pages', {
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
-        if (!res.ok) return;
+
+        const res = await fetch('/api/pages', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (!res.ok) throw new Error(`pages list returned ${res.status}`);
         const pages = await res.json();
+
+        dashLoading.classList.add('hidden');
         renderPages(pages);
         renderGraceBanner(pages);
       } catch (e) {
         console.error('Failed to load pages:', e);
+        dashLoading.classList.add('hidden');
+        dashErrorBanner.classList.remove('hidden');
+      }
+    }
+
+    function renderTierChip(me) {
+      if (!dashTierChip) return;
+      dashTierChip.classList.remove('pg-tier-chip--pro', 'pg-tier-chip--warn');
+      if (me.inGrace) {
+        dashTierChip.textContent = 'Pro · grace';
+        dashTierChip.classList.add('pg-tier-chip--warn');
+        dashTierChip.classList.remove('hidden');
+        dashGoProBtn.classList.remove('hidden');
+        dashManageBtn.classList.add('hidden');
+      } else if (me.isPro) {
+        dashTierChip.textContent = 'Pro';
+        dashTierChip.classList.add('pg-tier-chip--pro');
+        dashTierChip.classList.remove('hidden');
+        dashGoProBtn.classList.add('hidden');
+        dashManageBtn.classList.remove('hidden');
+      } else {
+        dashTierChip.textContent = 'Free';
+        dashTierChip.classList.remove('hidden');
+        dashGoProBtn.classList.remove('hidden');
+        dashManageBtn.classList.add('hidden');
       }
     }
 
@@ -252,23 +419,33 @@
       const dateStr = ends
         ? ends.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
         : null;
-      graceBannerText.textContent = `Your Pro subscription has lapsed. Renew, or pick ${limit} link${limit === 1 ? '' : 's'} to keep before ${dateStr || 'the deadline'}.`;
-      graceBannerMeta.textContent = `${selected} of ${limit} selected. ${ends ? `If you ignore this, the most recently viewed ${limit} will be kept automatically.` : ''}`;
+      graceTitle.innerHTML = `Your Pro lapsed. <em>Renew</em>, or pick ${limit} link${limit === 1 ? '' : 's'} to keep before ${dateStr || 'the deadline'}.`;
+      graceMeta.textContent = `${selected} of ${limit} selected. ${ends ? `If you ignore this, the most recently viewed ${limit} are kept automatically.` : ''}`;
       graceBanner.classList.remove('hidden');
     }
 
     function renderPages(pages) {
       dashPages.innerHTML = '';
-      if (pages.length === 0) {
+      const total = pages.length;
+      const cap = currentMe?.isPro ? 100 : 3;
+      const tierLabel = currentMe?.isPro ? 'Pro' : 'Free';
+      dashCount.innerHTML = total
+        ? `<strong>${total}</strong> of ${cap} · ${tierLabel}`
+        : `<strong>0</strong> of ${cap} · ${tierLabel}`;
+
+      if (total === 0) {
         dashEmpty.classList.remove('hidden');
+        dashPages.classList.add('hidden');
         return;
       }
       dashEmpty.classList.add('hidden');
+      dashPages.classList.remove('hidden');
 
       const now = new Date();
-      pages.forEach(page => {
-        const el = document.createElement('div');
-        el.className = 'dash-page-item';
+      pages.forEach((page, idx) => {
+        const li = document.createElement('li');
+        li.className = 'pg-page';
+        if (graceState.inGrace && !page.keptAfterGrace) li.classList.add('pg-page--unkept');
 
         const expires = new Date(page.expiresAt);
         const isNever = expires.getFullYear() >= 9999;
@@ -276,83 +453,89 @@
         const isExpired = !isNever && daysLeft <= 0;
 
         let expiryText;
-        if (isNever) expiryText = 'Never expires';
-        else if (isExpired) expiryText = '<span class="expired">Expired</span>';
+        if (isExpired) expiryText = `<span class="expired">Expired</span>`;
+        else if (isNever) expiryText = 'Never expires';
         else if (daysLeft === 1) expiryText = '1 day left';
         else expiryText = `${daysLeft} days left`;
 
         const slug = page.slug ? `/${page.slug}` : `/${page.id}`;
         const sizeKb = page.fileSize ? `${(page.fileSize / 1024).toFixed(1)} KB` : '';
         const createdDate = new Date(page.createdAt).toLocaleDateString('en-US', {
-          month: 'short', day: 'numeric', year: 'numeric'
+          month: 'short', day: 'numeric', year: 'numeric',
         });
 
-        // Views: "12 / 1,000" if a cap is set, otherwise just "12 views".
         const views = page.viewCount || 0;
-        const viewsText = page.viewCap != null
-          ? `${views.toLocaleString()} / ${page.viewCap.toLocaleString()} views`
-          : `${views.toLocaleString()} views`;
+        const cap = page.viewCap;
+        const pct = cap ? Math.min(1, views / cap) : 0;
+        const near = cap ? pct >= 0.8 : false;
+        const viewsHtml = cap != null
+          ? `<span class="pg-page-views-num">${views.toLocaleString()}</span><span class="pg-page-views-cap">/ ${cap.toLocaleString()}</span>`
+          : `<span class="pg-page-views-num">${views.toLocaleString()}</span>`;
 
-        // Buttons depend on per-page capability flags from the server. The
-        // dashboard never decides tiers itself — it just renders what the
-        // server says is allowed for this page.
+        const tags = [];
+        if (page.isPublic) tags.push(`<span class="pg-tag pg-tag--public">Public</span>`);
+        else tags.push(`<span class="pg-tag">Locked</span>`);
+        if (isExpired) tags.push(`<span class="pg-tag pg-tag--error">Expired</span>`);
+
         const passwordMode = page.passwordResettable ? 'reset' : 'change';
         const passwordLabel = page.passwordResettable ? 'Reset password' : 'Change password';
-        // Public pages have no password gate, so the change/reset action
-        // is meaningless — the server-side `hasPassword` flag drives whether
-        // we render the button at all (Phase 4b will add an "edit" entry
-        // point that can toggle public off and add a password back).
         const passwordBtn = page.hasPassword
-          ? `<button class="btn-icon" data-action="password" data-id="${escapeAttr(page.id)}" data-mode="${passwordMode}">${passwordLabel}</button>`
-          : '';
-        const deleteBtn = page.canDelete
-          ? `<button class="btn-icon btn-icon--delete" data-action="delete" data-id="${escapeAttr(page.id)}">Delete</button>`
+          ? `<button class="pg-action-btn" data-action="password" data-id="${escapeAttr(page.id)}" data-mode="${passwordMode}">${passwordLabel}</button>`
           : '';
         const editBtn = page.canEdit
-          ? `<button class="btn-icon" data-action="edit" data-id="${escapeAttr(page.id)}">Edit</button>`
+          ? `<button class="pg-action-btn" data-action="edit" data-id="${escapeAttr(page.id)}">Edit</button>`
           : '';
-        // Stash the page payload on the row so the edit modal can prefill
-        // without a second fetch. `viewCapExplicit` is the raw DB value
-        // (null when no per-page cap is set) — distinct from `viewCap`,
-        // which the server resolves to the tier default for display. The
-        // modal needs the raw value so a no-op save doesn't pin the page
-        // to whatever the current default happens to be.
-        el.dataset.page = JSON.stringify({
+        const deleteBtn = page.canDelete
+          ? `<button class="pg-action-btn pg-action-btn--danger" data-action="delete" data-id="${escapeAttr(page.id)}">Delete</button>`
+          : '';
+
+        li.dataset.page = JSON.stringify({
           id: page.id,
           slug: page.slug,
           isPublic: page.isPublic,
           viewCapExplicit: page.viewCapExplicit ?? null,
         });
 
-        el.innerHTML = `
-          <div class="dash-page-info">
-            <div class="dash-page-name">${escapeHtml(page.filename || page.id)}</div>
-            <div class="dash-page-meta">
-              <span>${slug}</span>
-              <span class="dash-dot">&middot;</span>
+        li.innerHTML = `
+          <span class="pg-page-index">${String(idx + 1).padStart(2, '0')}</span>
+          <div class="pg-page-body">
+            <div class="pg-page-title-row">
+              <h3 class="pg-page-title">${escapeHtml(page.filename || page.id)}</h3>
+              ${tags.join('')}
+            </div>
+            <p class="pg-page-url">
+              <span class="pg-page-url-host">pagegate.app</span><span class="pg-page-url-slug">${escapeHtml(slug)}</span>
+            </p>
+            <div class="pg-page-meta">
               <span>${sizeKb}</span>
-              <span class="dash-dot">&middot;</span>
-              <span>${createdDate}</span>
-              <span class="dash-dot">&middot;</span>
+              <span class="pg-page-meta-sep">·</span>
+              <span>Uploaded ${createdDate}</span>
+              <span class="pg-page-meta-sep">·</span>
               <span>${expiryText}</span>
-              <span class="dash-dot">&middot;</span>
-              <span>${viewsText}</span>
             </div>
           </div>
-          <div class="dash-page-actions">
+          <div class="pg-page-views">
+            ${viewsHtml}
+            <div class="pg-page-views-label">views</div>
+            ${cap != null ? `
+              <div class="pg-page-views-bar ${near ? 'near' : ''}">
+                <div class="pg-page-views-bar-fill" style="width:${(pct * 100).toFixed(0)}%"></div>
+              </div>` : ''}
+          </div>
+          <div class="pg-page-actions">
             ${graceState.inGrace ? `
-              <label class="keep-toggle" title="Keep this page when grace ends">
+              <label class="pg-keep-toggle" title="Keep this page when grace ends">
                 <input type="checkbox" data-action="keep" data-id="${escapeAttr(page.id)}" ${page.keptAfterGrace ? 'checked' : ''}>
-                <span>Keep</span>
+                <span class="pg-keep-toggle-pill"><span class="pg-keep-toggle-dot"></span>Keep</span>
               </label>` : ''}
-            <button class="btn-icon" data-action="copy" data-slug="${escapeAttr(slug)}">Copy</button>
-            <button class="btn-icon" data-action="open" data-slug="${escapeAttr(slug)}">Open</button>
+            <button class="pg-action-btn" data-action="copy" data-slug="${escapeAttr(slug)}">Copy</button>
+            <button class="pg-action-btn" data-action="open" data-slug="${escapeAttr(slug)}">Open</button>
             ${editBtn}
             ${passwordBtn}
             ${deleteBtn}
           </div>
         `;
-        dashPages.appendChild(el);
+        dashPages.appendChild(li);
       });
     }
 
@@ -377,15 +560,17 @@
         const rows = Array.from(dashPages.querySelectorAll('input[data-action="keep"]'));
         const fakePages = rows.map(r => ({ keptAfterGrace: r.checked }));
         renderGraceBanner(fakePages);
+        // Update opacity of this row inline.
+        const li = cb.closest('.pg-page');
+        if (li) li.classList.toggle('pg-page--unkept', !keep);
       } catch (err) {
         console.error('Keep toggle failed:', err);
-        cb.checked = !keep; // revert on failure
+        cb.checked = !keep;
       }
     });
 
-    // Delegated click handler
     dashPages.addEventListener('click', async (e) => {
-      const btn = e.target.closest('.btn-icon');
+      const btn = e.target.closest('.pg-action-btn');
       if (!btn) return;
       const action = btn.dataset.action;
 
@@ -393,15 +578,19 @@
         const url = window.location.origin + btn.dataset.slug;
         try {
           await navigator.clipboard.writeText(url);
+          const original = btn.textContent;
           btn.textContent = 'Copied!';
           btn.classList.add('copied');
-          setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
-        } catch { /* ignore */ }
+          setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1400);
+        } catch {
+          btn.textContent = 'Press ⌘C';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1800);
+        }
       } else if (action === 'open') {
         window.open(btn.dataset.slug, '_blank');
       } else if (action === 'edit') {
         editingTargetId = btn.dataset.id;
-        const row = btn.closest('.dash-page-item');
+        const row = btn.closest('.pg-page');
         const meta = row?.dataset.page ? JSON.parse(row.dataset.page) : {};
         editFileInput.value = '';
         editSlugInput.value = meta.slug || '';
@@ -430,7 +619,7 @@
         passwordModal.classList.remove('hidden');
         (editingMode === 'reset' ? newPasswordInput : oldPasswordInput).focus();
       } else if (action === 'delete') {
-        if (!confirm('Delete this page? This cannot be undone.')) return;
+        if (!confirm('Delete this page? This can’t be undone.')) return;
         try {
           const token = await getToken();
           const res = await fetch(`/api/pages/${btn.dataset.id}`, {
@@ -438,24 +627,24 @@
             headers: { 'Authorization': `Bearer ${token}` },
           });
           if (res.ok) loadPages();
-        } catch (e) {
-          console.error('Delete failed:', e);
+        } catch (err) {
+          console.error('Delete failed:', err);
         }
       }
     });
 
     // Password modal
-    modalCancelBtn.addEventListener('click', () => passwordModal.classList.add('hidden'));
+    [modalCloseBtn, modalCancelBtn].forEach(btn => btn?.addEventListener('click', () => passwordModal.classList.add('hidden')));
     modalSaveBtn.addEventListener('click', async () => {
       const oldPw = oldPasswordInput.value.trim();
       const pw = newPasswordInput.value.trim();
       if (editingMode === 'change' && !oldPw) {
-        modalError.textContent = 'Current password is required';
+        modalError.textContent = '— Current password is required.';
         modalError.classList.remove('hidden');
         return;
       }
       if (!pw) {
-        modalError.textContent = 'New password is required';
+        modalError.textContent = '— New password is required.';
         modalError.classList.remove('hidden');
         return;
       }
@@ -480,32 +669,29 @@
         if (res.ok) {
           passwordModal.classList.add('hidden');
         } else {
-          const data = await res.json();
-          modalError.textContent = data.error || 'Failed';
+          const data = await res.json().catch(() => ({}));
+          modalError.textContent = `— ${data.error || 'Failed.'}`;
           modalError.classList.remove('hidden');
         }
       } catch {
-        modalError.textContent = 'Connection error';
+        modalError.textContent = '— Connection error.';
         modalError.classList.remove('hidden');
       } finally {
         modalSaveBtn.disabled = false;
       }
     });
-
-    newPasswordInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') modalSaveBtn.click();
-    });
+    newPasswordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') modalSaveBtn.click(); });
+    oldPasswordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') modalSaveBtn.click(); });
 
     // === Edit modal ===
-    editCancelBtn.addEventListener('click', () => editModal.classList.add('hidden'));
+    [editCloseBtn, editCancelBtn].forEach(btn => btn?.addEventListener('click', () => editModal.classList.add('hidden')));
 
-    // Inline slug validation, mirrors tiers.PRO_SLUG_REGEX from server.
     const PRO_SLUG_REGEX_DASH = /^[a-z0-9]{2,}(-[a-z0-9]{2,}){2,}$/;
     editSlugInput.addEventListener('input', () => {
       const v = editSlugInput.value.trim().toLowerCase();
       if (!v) { editSlugHint.textContent = ''; editSlugHint.className = 'field-hint'; return; }
       if (v.length > 60 || !PRO_SLUG_REGEX_DASH.test(v)) {
-        editSlugHint.textContent = 'Use 3+ word groups, hyphenated, each 2+ chars (e.g. my-landing-page)';
+        editSlugHint.textContent = 'Use 3+ word groups, hyphenated, each 2+ chars (e.g. my-landing-page).';
         editSlugHint.className = 'field-hint field-hint--error';
       } else {
         editSlugHint.textContent = '';
@@ -540,12 +726,12 @@
           editModal.classList.add('hidden');
           loadPages();
         } else {
-          const data = await res.json();
-          editModalError.textContent = data.error || 'Failed';
+          const data = await res.json().catch(() => ({}));
+          editModalError.textContent = `— ${data.error || 'Save failed.'}`;
           editModalError.classList.remove('hidden');
         }
       } catch {
-        editModalError.textContent = 'Connection error';
+        editModalError.textContent = '— Connection error.';
         editModalError.classList.remove('hidden');
       } finally {
         editSaveBtn.disabled = false;
@@ -554,11 +740,11 @@
 
     function escapeHtml(str) {
       const d = document.createElement('div');
-      d.textContent = str;
+      d.textContent = String(str);
       return d.innerHTML;
     }
     function escapeAttr(str) {
-      return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     initClerk();
