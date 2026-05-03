@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dashboard — PageGate Pro</title>
+  <title>Dashboard — PageGate</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="style.css">
   <script
@@ -19,7 +19,7 @@
   <div class="container">
     <header class="dash-header">
       <a href="/" class="logo-link">PageGate</a>
-      <span class="pro-badge">PRO</span>
+      <span class="pro-badge hidden" id="dashProBadge">PRO</span>
     </header>
 
     <div class="dash-loading" id="dashLoading">Loading...</div>
@@ -42,12 +42,14 @@
       <div class="dash-pages" id="dashPages"></div>
     </div>
 
-    <!-- Password update modal -->
+    <!-- Password update modal — works in two modes:
+         (a) reset (no old password needed) for wrapped-key pages, and
+         (b) change (old password required) for legacy password-derived pages. -->
     <div class="modal-overlay hidden" id="passwordModal">
       <div class="modal-card">
-        <h3>Update Password</h3>
-        <p class="modal-note">Enter your current password and a new one. The page will be re-encrypted with the new password.</p>
-        <div class="input-group">
+        <h3 id="modalTitle">Reset password</h3>
+        <p class="modal-note" id="modalNote">Set a new password for this page. Anyone with the link will need the new password to view it.</p>
+        <div class="input-group hidden" id="oldPasswordGroup">
           <label for="oldPasswordInput">Current password</label>
           <input type="password" id="oldPasswordInput" placeholder="Enter current password" autocomplete="off">
         </div>
@@ -79,13 +81,19 @@
     const dashPages = document.getElementById('dashPages');
     const dashSignInBtn = document.getElementById('dashSignInBtn');
 
+    const dashProBadge = document.getElementById('dashProBadge');
     const passwordModal = document.getElementById('passwordModal');
     const oldPasswordInput = document.getElementById('oldPasswordInput');
     const newPasswordInput = document.getElementById('newPasswordInput');
+    const oldPasswordGroup = document.getElementById('oldPasswordGroup');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalNote = document.getElementById('modalNote');
     const modalError = document.getElementById('modalError');
     const modalCancelBtn = document.getElementById('modalCancelBtn');
     const modalSaveBtn = document.getElementById('modalSaveBtn');
     let editingPageId = null;
+    // 'reset' (no old password — wrapped-key pages) or 'change' (with old password — legacy)
+    let editingMode = 'reset';
 
     async function initClerk() {
       const scriptTag = document.getElementById('clerk-script');
@@ -125,16 +133,27 @@
     async function loadPages() {
       try {
         const token = await getToken();
+        // POST /api/auth/sync (not GET /api/me) — a user who lands directly
+        // on /dashboard after sign-in won't have hit `/` yet, so the local
+        // users row may not exist. /api/me returns 404 in that case and
+        // /api/pages then fails the same way, leaving the dashboard empty.
+        // /api/auth/sync upserts the user row and returns the same isPro
+        // info we need for the badge.
+        const syncRes = await fetch('/api/auth/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (syncRes.ok) {
+          const me = await syncRes.json();
+          if (me.isPro) dashProBadge.classList.remove('hidden');
+          else dashProBadge.classList.add('hidden');
+        }
         const res = await fetch('/api/pages', {
           headers: { 'Authorization': `Bearer ${token}` },
         });
-        if (res.status === 403) {
-          dashContent.classList.add('hidden');
-          dashAuthRequired.classList.remove('hidden');
-          dashAuthRequired.querySelector('p').textContent = 'Dashboard access requires PageGate Pro.';
-          dashSignInBtn.classList.add('hidden');
-          return;
-        }
         if (!res.ok) return;
         const pages = await res.json();
         renderPages(pages);
@@ -173,6 +192,21 @@
           month: 'short', day: 'numeric', year: 'numeric'
         });
 
+        // Views: "12 / 1,000" if a cap is set, otherwise just "12 views".
+        const views = page.viewCount || 0;
+        const viewsText = page.viewCap != null
+          ? `${views.toLocaleString()} / ${page.viewCap.toLocaleString()} views`
+          : `${views.toLocaleString()} views`;
+
+        // Buttons depend on per-page capability flags from the server. The
+        // dashboard never decides tiers itself — it just renders what the
+        // server says is allowed for this page.
+        const passwordMode = page.passwordResettable ? 'reset' : 'change';
+        const passwordLabel = page.passwordResettable ? 'Reset password' : 'Change password';
+        const deleteBtn = page.canDelete
+          ? `<button class="btn-icon btn-icon--delete" data-action="delete" data-id="${escapeAttr(page.id)}">Delete</button>`
+          : '';
+
         el.innerHTML = `
           <div class="dash-page-info">
             <div class="dash-page-name">${escapeHtml(page.filename || page.id)}</div>
@@ -184,13 +218,15 @@
               <span>${createdDate}</span>
               <span class="dash-dot">&middot;</span>
               <span>${expiryText}</span>
+              <span class="dash-dot">&middot;</span>
+              <span>${viewsText}</span>
             </div>
           </div>
           <div class="dash-page-actions">
             <button class="btn-icon" data-action="copy" data-slug="${escapeAttr(slug)}">Copy</button>
             <button class="btn-icon" data-action="open" data-slug="${escapeAttr(slug)}">Open</button>
-            <button class="btn-icon" data-action="password" data-id="${escapeAttr(page.id)}">Password</button>
-            <button class="btn-icon btn-icon--delete" data-action="delete" data-id="${escapeAttr(page.id)}">Delete</button>
+            <button class="btn-icon" data-action="password" data-id="${escapeAttr(page.id)}" data-mode="${passwordMode}">${passwordLabel}</button>
+            ${deleteBtn}
           </div>
         `;
         dashPages.appendChild(el);
@@ -215,11 +251,21 @@
         window.open(btn.dataset.slug, '_blank');
       } else if (action === 'password') {
         editingPageId = btn.dataset.id;
+        editingMode = btn.dataset.mode === 'change' ? 'change' : 'reset';
         oldPasswordInput.value = '';
         newPasswordInput.value = '';
         modalError.classList.add('hidden');
+        if (editingMode === 'reset') {
+          modalTitle.textContent = 'Reset password';
+          modalNote.textContent = 'Set a new password for this page. Anyone with the link will need the new password to view it.';
+          oldPasswordGroup.classList.add('hidden');
+        } else {
+          modalTitle.textContent = 'Change password';
+          modalNote.textContent = 'Enter your current password and a new one. The page will be re-encrypted with the new password.';
+          oldPasswordGroup.classList.remove('hidden');
+        }
         passwordModal.classList.remove('hidden');
-        oldPasswordInput.focus();
+        (editingMode === 'reset' ? newPasswordInput : oldPasswordInput).focus();
       } else if (action === 'delete') {
         if (!confirm('Delete this page? This cannot be undone.')) return;
         try {
@@ -240,7 +286,7 @@
     modalSaveBtn.addEventListener('click', async () => {
       const oldPw = oldPasswordInput.value.trim();
       const pw = newPasswordInput.value.trim();
-      if (!oldPw) {
+      if (editingMode === 'change' && !oldPw) {
         modalError.textContent = 'Current password is required';
         modalError.classList.remove('hidden');
         return;
@@ -253,13 +299,20 @@
       modalSaveBtn.disabled = true;
       try {
         const token = await getToken();
-        const res = await fetch(`/api/pages/${editingPageId}/password`, {
-          method: 'PATCH',
+        const url = editingMode === 'reset'
+          ? `/api/pages/${editingPageId}/password/reset`
+          : `/api/pages/${editingPageId}/password`;
+        const method = editingMode === 'reset' ? 'POST' : 'PATCH';
+        const body = editingMode === 'reset'
+          ? { password: pw }
+          : { oldPassword: oldPw, password: pw };
+        const res = await fetch(url, {
+          method,
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
           },
-          body: JSON.stringify({ oldPassword: oldPw, password: pw }),
+          body: JSON.stringify(body),
         });
         if (res.ok) {
           passwordModal.classList.add('hidden');

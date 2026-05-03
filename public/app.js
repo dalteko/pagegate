@@ -66,18 +66,20 @@
       authUser.classList.remove('hidden');
       authAvatar.src = user.imageUrl || '';
 
+      // Dashboard link is available to any signed-in user (Tier 2 + Tier 3).
+      // Pro-specific UI (slug/expiration fields, manage billing, no upsell)
+      // gates separately on isPro.
+      dashBtn.classList.remove('hidden');
       if (currentUser?.isPro) {
         proBadge.classList.remove('hidden');
         goProBtn.classList.add('hidden');
         manageBtn.classList.remove('hidden');
-        dashBtn.classList.remove('hidden');
         proFields?.classList.remove('hidden');
         proUpsell.classList.add('hidden');
       } else {
         proBadge.classList.add('hidden');
         goProBtn.classList.remove('hidden');
         manageBtn.classList.add('hidden');
-        dashBtn.classList.add('hidden');
         proFields?.classList.add('hidden');
       }
     } else {

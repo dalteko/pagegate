@@ -239,8 +239,18 @@ const releaseStripeEventStmt = db.prepare(`
 `);
 const getUserPagesStmt = db.prepare(`
   SELECT id, original_filename, file_size, slug, created_at, expires_at,
-         view_count, view_cap, is_public, tier_at_creation, archived_at
+         view_count, view_cap, is_public, tier_at_creation, archived_at,
+         wrapped_key
     FROM pages WHERE user_id = ? ORDER BY created_at DESC
+`);
+// Count of a user's active (non-expired, non-archived) pages. Used to
+// enforce per-tier link caps — Tier 2 = 3, Tier 3 = 100. Archived rows
+// (Phase 5 downgrade grace) don't count.
+const countActiveUserPagesStmt = db.prepare(`
+  SELECT COUNT(*) AS c FROM pages
+   WHERE user_id = ?
+     AND expires_at > ?
+     AND archived_at IS NULL
 `);
 const setPageOwnerStmt = db.prepare(`UPDATE pages SET user_id = ? WHERE id = ?`);
 const getPageBySlugStmt = db.prepare(`SELECT * FROM pages WHERE slug = ? AND expires_at > ?`);
@@ -362,6 +372,9 @@ module.exports = {
   },
   getUserPages(clerkId) {
     return getUserPagesStmt.all(clerkId);
+  },
+  countActiveUserPages(clerkId) {
+    return countActiveUserPagesStmt.get(clerkId, new Date().toISOString()).c;
   },
   setPageOwner(pageId, clerkId) {
     return setPageOwnerStmt.run(clerkId, pageId);

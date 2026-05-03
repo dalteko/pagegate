@@ -186,6 +186,23 @@ function getRequiredProUser(req, res) {
   return { userId, user };
 }
 
+// Any signed-in user — Tier 2 or Tier 3. Used by routes shared between
+// account and Pro (dashboard list, password reset). Distinct from
+// getRequiredProUser, which gates Pro-only features (delete, slug, etc.).
+function getRequiredAuthUser(req, res) {
+  const userId = getAuthUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Not signed in' });
+    return null;
+  }
+  const user = db.getUser(userId);
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return null;
+  }
+  return { userId, user };
+}
+
 // Multer: memory storage. File size cap is 10 MB across all tiers — see
 // tiers.js / TIERS.md for the rationale (rich HTML pages are well under
 // 1 MB; only base64-embedded media exceeds 10 MB and that's an anti-pattern).
@@ -245,11 +262,32 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'Only .html files are accepted' });
     }
 
-    // Check Pro status for slug and custom expiration
+    // Resolve tier upfront — every downstream decision (link cap, default
+    // expiry, slug eligibility, crypto path) keys off this.
     const userId = getAuthUserId(req);
     let user = null;
     if (userId) user = db.getUser(userId);
     const isPro = isUserPro(user);
+    const tier = tiers.tierFor(user, { isProActive: isUserPro });
+    const tierRule = tiers.RULES[tier];
+
+    // Per-tier link cap. Tier 1 = unlimited (rule is null). Tier 2 = 3,
+    // Tier 3 = 100. Tier 2 cannot delete by design — must wait for expiry.
+    // Tier 3 (Pro) can delete from the dashboard, so the advice differs.
+    // Archived pages (Phase 5 grace) don't count.
+    if (tierRule.maxLinks !== null && userId) {
+      const active = db.countActiveUserPages(userId);
+      if (active >= tierRule.maxLinks) {
+        const linkWord = tierRule.maxLinks === 1 ? 'link' : 'links';
+        const advice = isPro
+          ? 'Delete a page or wait for one to expire before creating another.'
+          : 'Wait for one to expire before creating another.';
+        return res.status(403).json({
+          error: `${tierRule.label} is limited to ${tierRule.maxLinks} active ${linkWord}. ${advice}`,
+          reason: 'link_cap',
+        });
+      }
+    }
 
     // Validate slug (Pro only)
     if (slug) {
@@ -261,9 +299,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       if (existing) return res.status(409).json({ error: 'This URL is already taken' });
     }
 
-    // Tier-driven default expiry. Anonymous gets 1 day per tiers.js;
-    // logged-in non-Pro keeps the legacy 30-day default until Phase 3
-    // tightens it to 7. Pro picks from EXPIRATION_OPTIONS.
+    // Tier-driven default expiry. Tier 1 = 1 day, Tier 2 = 7 days. Tier 3
+    // (Pro) picks from EXPIRATION_OPTIONS or defaults to 30 if not set —
+    // pulled from tiers.js so future tweaks live in one place.
     const now = new Date();
     let expiresAt;
     if (expiration && expiration !== '30') {
@@ -274,11 +312,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         ? new Date('9999-12-31T23:59:59.999Z') // "never" = far future
         : new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
     } else {
-      // The pre-tier default was 30 days for everyone. Anonymous now uses
-      // the tier rule (1 day). Logged-in non-Pro stays at 30 until Phase 3.
-      const defaultDays = !user
-        ? tiers.RULES[tiers.TIER.ANONYMOUS].expiryDays
-        : 30;
+      const defaultDays = tier === tiers.TIER.PRO
+        ? 30  // Pro keeps 30-day default; explicit `expiration` overrides
+        : tierRule.expiryDays;
       expiresAt = new Date(now.getTime() + defaultDays * 24 * 60 * 60 * 1000);
     }
 
@@ -288,7 +324,6 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     // Pick the crypto path by tier (see crypto.js header for the why).
     // Anonymous → password-derived (zero-knowledge). Account/Pro →
     // master-key wrapped, so account-driven password reset is possible.
-    const tier = tiers.tierFor(user, { isProActive: isUserPro });
     const html = storage.prepareHtml(file.buffer);
 
     let encryptionSalt = null;
@@ -523,25 +558,46 @@ app.post('/api/billing-portal', async (req, res) => {
   }
 });
 
-// === Dashboard API (Pro) ===
+// === Dashboard API ===
+//
+// Tier 2 (account) and Tier 3 (Pro) share the same listing endpoint —
+// permissions diverge per-action: delete is Pro-only (Tier 2 cannot
+// delete by spec); password reset works for both.
 
-// GET /api/pages — list user's pages
+// GET /api/pages — list signed-in user's pages
 app.get('/api/pages', (req, res) => {
-  const auth = getRequiredProUser(req, res);
+  const auth = getRequiredAuthUser(req, res);
   if (!auth) return;
 
+  const isPro = isUserPro(auth.user);
   const pages = db.getUserPages(auth.userId);
-  res.json(pages.map(p => ({
-    id: p.id,
-    filename: p.original_filename,
-    fileSize: p.file_size,
-    slug: p.slug || null,
-    createdAt: p.created_at,
-    expiresAt: p.expires_at,
-  })));
+  res.json(pages.map(p => {
+    const tier = p.tier_at_creation || tiers.TIER.ANONYMOUS;
+    const cap = p.view_cap ?? tiers.RULES[tier].viewCap;
+    return {
+      id: p.id,
+      filename: p.original_filename,
+      fileSize: p.file_size,
+      slug: p.slug || null,
+      createdAt: p.created_at,
+      expiresAt: p.expires_at,
+      viewCount: p.view_count || 0,
+      viewCap: cap,
+      isPublic: !!p.is_public,
+      tier,
+      // Whether this page supports server-side password reset. Pages
+      // created on the password-derived path (legacy) cannot be reset
+      // without the old password — the page key is derived from it.
+      passwordResettable: !!p.wrapped_key,
+      // Per-action capability flags so the dashboard can render the
+      // right buttons without duplicating tier logic.
+      canDelete: isPro,
+      canEdit: isPro,
+    };
+  }));
 });
 
-// DELETE /api/pages/:pageId — delete a page (owner only)
+// DELETE /api/pages/:pageId — delete a page (Pro only; Tier 2 cannot delete)
 app.delete('/api/pages/:pageId', (req, res) => {
   const auth = getRequiredProUser(req, res);
   if (!auth) return;
@@ -555,11 +611,12 @@ app.delete('/api/pages/:pageId', (req, res) => {
   res.json({ ok: true });
 });
 
-// PATCH /api/pages/:pageId/password — update password (owner only)
-// Requires the old password to re-encrypt the file with the new one.
+// PATCH /api/pages/:pageId/password — change password with the old one.
+// Open to any signed-in user (Tier 2 + Tier 3). Tier 1 pages have no
+// owner so this never reaches them.
 app.patch('/api/pages/:pageId/password', async (req, res) => {
   try {
-    const auth = getRequiredProUser(req, res);
+    const auth = getRequiredAuthUser(req, res);
     if (!auth) return;
 
     const { oldPassword, password } = req.body;
@@ -582,13 +639,10 @@ app.patch('/api/pages/:pageId/password', async (req, res) => {
     const newHash = await bcrypt.hash(password.trim(), 10);
 
     if (page.wrapped_key) {
-      // Master-key path: password isn't part of crypto, just rotate the
-      // bcrypt hash. Phase 3 will add a "reset without old password" flow
-      // for Tier 2 — same code path, just skips the old-password check.
+      // Master-key path: password isn't part of crypto, just rotate hash.
       db.updatePagePassword(page.id, newHash);
     } else if (page.encryption_salt) {
-      // Password-derived path: must decrypt with the old password and
-      // re-encrypt under the new one.
+      // Password-derived path: decrypt with old password, re-encrypt with new.
       const blob = storage.readPageBlob(page.id);
       if (!blob) return res.status(500).json({ error: 'Failed to decrypt page — file may have been cleaned up' });
       const html = cryptoLib.decryptWithPassword(blob, oldPassword.trim(), page.encryption_salt);
@@ -604,6 +658,41 @@ app.patch('/api/pages/:pageId/password', async (req, res) => {
   } catch (err) {
     console.error('Password update error:', err);
     res.status(500).json({ error: 'Password update failed' });
+  }
+});
+
+// POST /api/pages/:pageId/password/reset — reset password without knowing
+// the old one. Only works for wrapped-key pages (Tier 2/3 created after
+// Phase 1) since the page key is server-held there. For password-derived
+// pages, a reset is impossible by design — the key IS the password.
+app.post('/api/pages/:pageId/password/reset', async (req, res) => {
+  try {
+    const auth = getRequiredAuthUser(req, res);
+    if (!auth) return;
+
+    const { password } = req.body;
+    if (!password || !password.trim()) return res.status(400).json({ error: 'New password is required' });
+
+    const page = db.getPageById(req.params.pageId);
+    if (!page) return res.status(404).json({ error: 'Page not found' });
+    if (page.user_id !== auth.userId) return res.status(403).json({ error: 'Not your page' });
+    if (new Date(page.expires_at) < new Date()) {
+      return res.status(410).json({ error: 'Page has expired' });
+    }
+
+    if (!page.wrapped_key) {
+      return res.status(400).json({
+        error: 'This page was created without a recoverable key and cannot be reset. The original password is the only way to unlock it.',
+        reason: 'not_resettable',
+      });
+    }
+
+    const newHash = await bcrypt.hash(password.trim(), 10);
+    db.updatePagePassword(page.id, newHash);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Password reset error:', err);
+    res.status(500).json({ error: 'Password reset failed' });
   }
 });
 
