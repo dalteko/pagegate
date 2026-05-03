@@ -30,6 +30,12 @@
     </div>
 
     <div class="dash-content hidden" id="dashContent">
+      <!-- Pro downgrade grace banner. Shown only when /api/me reports inGrace. -->
+      <div class="grace-banner hidden" id="graceBanner">
+        <p class="grace-banner-text" id="graceBannerText"></p>
+        <p class="grace-banner-meta" id="graceBannerMeta"></p>
+      </div>
+
       <div class="section-header">
         <h2>My Pages</h2>
         <a href="/" class="btn-text">Upload new</a>
@@ -130,6 +136,13 @@
     const dashSignInBtn = document.getElementById('dashSignInBtn');
 
     const dashProBadge = document.getElementById('dashProBadge');
+    const graceBanner = document.getElementById('graceBanner');
+    const graceBannerText = document.getElementById('graceBannerText');
+    const graceBannerMeta = document.getElementById('graceBannerMeta');
+
+    // Captured from /api/me on each load. Drives the Keep toggle and
+    // the survivor counter rendered inside the banner.
+    let graceState = { inGrace: false, graceEndsAt: null, graceKeepLimit: 3 };
 
     // Edit modal
     const editModal = document.getElementById('editModal');
@@ -195,23 +208,26 @@
     async function loadPages() {
       try {
         const token = await getToken();
-        // POST /api/auth/sync (not GET /api/me) — a user who lands directly
-        // on /dashboard after sign-in won't have hit `/` yet, so the local
-        // users row may not exist. /api/me returns 404 in that case and
-        // /api/pages then fails the same way, leaving the dashboard empty.
-        // /api/auth/sync upserts the user row and returns the same isPro
-        // info we need for the badge.
-        const syncRes = await fetch('/api/auth/sync', {
+        // Ensure a local user row exists before reading /api/me. Users who
+        // land directly on /dashboard after Clerk sign-in may not have hit
+        // the homepage sync path yet.
+        await fetch('/api/auth/sync', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
           },
         });
-        if (syncRes.ok) {
-          const me = await syncRes.json();
-          if (me.isPro) dashProBadge.classList.remove('hidden');
+        const meRes = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (me.isPro && !me.inGrace) dashProBadge.classList.remove('hidden');
           else dashProBadge.classList.add('hidden');
+          graceState = {
+            inGrace: !!me.inGrace,
+            graceEndsAt: me.graceEndsAt || null,
+            graceKeepLimit: me.graceKeepLimit || 3,
+          };
         }
         const res = await fetch('/api/pages', {
           headers: { 'Authorization': `Bearer ${token}` },
@@ -219,9 +235,26 @@
         if (!res.ok) return;
         const pages = await res.json();
         renderPages(pages);
+        renderGraceBanner(pages);
       } catch (e) {
         console.error('Failed to load pages:', e);
       }
+    }
+
+    function renderGraceBanner(pages) {
+      if (!graceState.inGrace) {
+        graceBanner.classList.add('hidden');
+        return;
+      }
+      const limit = graceState.graceKeepLimit;
+      const selected = pages.filter(p => p.keptAfterGrace).length;
+      const ends = graceState.graceEndsAt ? new Date(graceState.graceEndsAt) : null;
+      const dateStr = ends
+        ? ends.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+        : null;
+      graceBannerText.textContent = `Your Pro subscription has lapsed. Renew, or pick ${limit} link${limit === 1 ? '' : 's'} to keep before ${dateStr || 'the deadline'}.`;
+      graceBannerMeta.textContent = `${selected} of ${limit} selected. ${ends ? `If you ignore this, the most recent ${limit} will be kept automatically.` : ''}`;
+      graceBanner.classList.remove('hidden');
     }
 
     function renderPages(pages) {
@@ -307,6 +340,11 @@
             </div>
           </div>
           <div class="dash-page-actions">
+            ${graceState.inGrace ? `
+              <label class="keep-toggle" title="Keep this page when grace ends">
+                <input type="checkbox" data-action="keep" data-id="${escapeAttr(page.id)}" ${page.keptAfterGrace ? 'checked' : ''}>
+                <span>Keep</span>
+              </label>` : ''}
             <button class="btn-icon" data-action="copy" data-slug="${escapeAttr(slug)}">Copy</button>
             <button class="btn-icon" data-action="open" data-slug="${escapeAttr(slug)}">Open</button>
             ${editBtn}
@@ -317,6 +355,33 @@
         dashPages.appendChild(el);
       });
     }
+
+    // Keep-toggle handler (separate event because checkboxes fire 'change',
+    // not 'click', for keyboard interaction).
+    dashPages.addEventListener('change', async (e) => {
+      const cb = e.target.closest('input[data-action="keep"]');
+      if (!cb) return;
+      const pageId = cb.dataset.id;
+      const keep = cb.checked;
+      try {
+        const token = await getToken();
+        await fetch(`/api/pages/${pageId}/keep`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ keep }),
+        });
+        // Re-render the banner counter without a full reload.
+        const rows = Array.from(dashPages.querySelectorAll('input[data-action="keep"]'));
+        const fakePages = rows.map(r => ({ keptAfterGrace: r.checked }));
+        renderGraceBanner(fakePages);
+      } catch (err) {
+        console.error('Keep toggle failed:', err);
+        cb.checked = !keep; // revert on failure
+      }
+    });
 
     // Delegated click handler
     dashPages.addEventListener('click', async (e) => {

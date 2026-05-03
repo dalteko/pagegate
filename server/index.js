@@ -147,6 +147,17 @@ function isUserPro(user) {
   return false;
 }
 
+// True only during the grace window — Pro entitlements still active but
+// the subscription has lapsed and Tier 2 enforcement is coming. Used to
+// drive the dashboard banner and the Keep selector. See Phase 5 in the PRD.
+function isUserInGrace(user) {
+  if (!user) return false;
+  if (user.is_pro) return false; // active Pro, no grace involved
+  if (!user.pro_expires_at) return false;
+  const ends = new Date(user.pro_expires_at);
+  return ends > new Date();
+}
+
 // Decrypt a page row to its HTML, picking the crypto path by what's stored
 // on the row. Returns null if the on-disk blob is missing.
 //
@@ -532,6 +543,11 @@ app.get('/api/me', (req, res) => {
     email: user.email,
     isPro: isUserPro(user),
     proExpiresAt: user.pro_expires_at,
+    inGrace: isUserInGrace(user),
+    graceEndsAt: isUserInGrace(user) ? user.pro_expires_at : null,
+    // Number of survivors the user is allowed to keep when grace ends.
+    // Surfaced here so the dashboard banner reads from one source.
+    graceKeepLimit: tiers.RULES[tiers.TIER.ACCOUNT].maxLinks,
   });
 });
 
@@ -640,6 +656,7 @@ app.get('/api/pages', async (req, res) => {
       createdAt: p.created_at,
       expiresAt: p.expires_at,
       viewCount: p.view_count || 0,
+      lastViewedAt: p.last_viewed_at || null,
       viewCap: cap,
       // Raw DB value (null when no explicit cap). The edit modal uses this
       // to distinguish "no cap set" from "cap set to the tier default" —
@@ -658,6 +675,9 @@ app.get('/api/pages', async (req, res) => {
       passwordResettable: !!p.wrapped_key && !p.is_public,
       canDelete: isPro,
       canEdit: isPro,
+      // Phase 5: user's grace-period selection. Only meaningful while
+      // isUserInGrace(user); ignored once enforcement runs.
+      keptAfterGrace: !!p.kept_after_grace,
     };
   }));
 });
@@ -759,6 +779,32 @@ app.post('/api/pages/:pageId/password/reset', async (req, res) => {
     console.error('Password reset error:', err);
     res.status(500).json({ error: 'Password reset failed' });
   }
+});
+
+// POST /api/pages/:pageId/keep — mark/unmark a page to survive the Pro
+// downgrade enforcement. Accepted only during the grace window or while
+// Pro is still active (so the user can pre-select before grace begins).
+// Body: { keep: boolean }.
+app.post('/api/pages/:pageId/keep', (req, res) => {
+  const auth = getRequiredAuthUser(req, res);
+  if (!auth) return;
+
+  const page = db.getPageById(req.params.pageId);
+  if (!page) return res.status(404).json({ error: 'Page not found' });
+  if (page.user_id !== auth.userId) return res.status(403).json({ error: 'Not your page' });
+
+  // Tier 1/2 users have no grace flow; the column is meaningless for them.
+  if (!isUserPro(auth.user) && !isUserInGrace(auth.user)) {
+    return res.status(403).json({ error: 'Grace selection is only meaningful for Pro/lapsed-Pro accounts' });
+  }
+
+  const keep = req.body.keep === true || req.body.keep === 'true';
+  db.setPageKeptAfterGrace(page.id, keep);
+
+  // If the user already has more than the cap selected, it's still
+  // allowed — the day-30 enforcement will trim. Validating here would
+  // create a confusing race when toggling rapidly.
+  res.json({ ok: true, keep });
 });
 
 // PATCH /api/pages/:pageId — Pro edit-in-place. Accepts a multipart body
@@ -954,8 +1000,111 @@ function cleanupExpired() {
     console.log(`Cleaned up ${expiredIds.length} expired page(s)`);
   }
 }
+
+// Phase 5: enforce Tier 2 on users whose grace window has ended.
+//
+// Runs alongside cleanupExpired(). For each lapsed user:
+//   1. Pick survivors — user-flagged via /api/pages/:id/keep first,
+//      then fill remaining slots by most-recently-viewed until we reach
+//      the Tier-2 cap.
+//   2. Public-only links don't survive — Tier 2 has no public pages.
+//      User had 30 days to convert them to password-protected.
+//   3. Survivors get their custom slug released, view_cap cleared,
+//      tier_at_creation downgraded to 2, and a fresh 7-day expiry
+//      starting from the cutoff. Pages keep their wrapped-key crypto
+//      and password — that part doesn't change tiers.
+//   4. Non-survivors permanently deleted (DB + disk).
+//   5. User's pro_expires_at cleared so we don't re-process them.
+function enforceLapsedGracePeriods() {
+  const lapsed = db.getLapsedProUsers();
+  if (lapsed.length === 0) return;
+  const now = new Date();
+  const tier2 = tiers.RULES[tiers.TIER.ACCOUNT];
+  const newExpiry = new Date(now.getTime() + tier2.expiryDays * 24 * 60 * 60 * 1000).toISOString();
+  const keepLimit = tier2.maxLinks;
+
+  for (const user of lapsed) {
+    const allPages = db.getUserPages(user.clerk_id);
+    // Pages already past their own expiry will be swept by cleanupExpired
+    // shortly — no need to handle them here.
+    const live = allPages.filter(p => new Date(p.expires_at) > now);
+
+    // Public pages cannot survive into Tier 2 (no public pages allowed).
+    // Per TIERS.md they're deleted unconditionally — pulling them out of
+    // the survivor pool *before* picking ensures the cap of 3 is spent on
+    // pages that can actually be demoted. Otherwise a user with 4 public
+    // + 2 password-protected pages and no explicit picks would lose all
+    // 6 (auto-pick grabs the 3 most-recent, all of which happen to be
+    // public; inner loop deletes them; the password-protected ones below
+    // never get a slot). We honor explicit Keep flags only on survivable
+    // pages — checking Keep on a public page can't override the tier rule.
+    const survivable = live.filter(p => !p.is_public);
+    const publicPages = live.filter(p => p.is_public);
+
+    // Pick survivors from survivable pages: explicit selections first,
+    // then fill any remaining slots by most-recently-viewed. Pages that
+    // have never been viewed fall back to created_at for deterministic
+    // ordering.
+    const recency = (p) => Date.parse(p.last_viewed_at || p.created_at || 0) || 0;
+    const byMostRecentlyViewed = (a, b) => recency(b) - recency(a);
+    const ordered = [...survivable].sort(byMostRecentlyViewed);
+    const survivors = [];
+    const keepIds = new Set();
+
+    for (const p of ordered.filter(p => p.kept_after_grace)) {
+      if (survivors.length >= keepLimit) break;
+      survivors.push(p);
+      keepIds.add(p.id);
+    }
+    for (const p of ordered) {
+      if (survivors.length >= keepLimit) break;
+      if (keepIds.has(p.id)) continue;
+      survivors.push(p);
+      keepIds.add(p.id);
+    }
+
+    let deleted = 0;
+    let demoted = 0;
+
+    // Public pages: always deleted, never demoted.
+    for (const p of publicPages) {
+      db.deletePageById(p.id);
+      storage.deletePage(p.id);
+      deleted++;
+    }
+
+    for (const p of survivable) {
+      if (!keepIds.has(p.id)) {
+        db.deletePageById(p.id);
+        storage.deletePage(p.id);
+        deleted++;
+        continue;
+      }
+      // Demote to Tier 2: release slug, clear view cap, reset clock.
+      if (p.slug) db.setPageSlug(p.id, null);
+      db.updatePageViewCap(p.id, null);
+      db.updatePageExpiration(p.id, newExpiry);
+      db.updatePageTier(p.id, tiers.TIER.ACCOUNT);
+      db.setPageKeptAfterGrace(p.id, false);
+      demoted++;
+    }
+
+    // Clear the user's grace state so this only runs once per lapse.
+    db.updateUserPro(user.clerk_id, {
+      isPro: false,
+      stripeCustomerId: user.stripe_customer_id,
+      stripeSubscriptionId: user.stripe_subscription_id,
+      proExpiresAt: null,
+    });
+
+    console.log(`Grace ended for ${user.clerk_id}: ${demoted} kept (Tier 2), ${deleted} deleted`);
+  }
+}
+
 cleanupExpired();
+enforceLapsedGracePeriods();
 setInterval(cleanupExpired, 24 * 60 * 60 * 1000);
+setInterval(enforceLapsedGracePeriods, 24 * 60 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log(`PageGate running at http://localhost:${PORT}`);

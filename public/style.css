@@ -1411,3 +1411,35 @@ section {
     gap: 8px;
   }
 }
+
+/* Phase 5: Pro downgrade grace banner. Subtle warning tone — the user
+   still has full Pro access during this window. */
+.grace-banner {
+  background: #FFF7ED;
+  border: 1px solid #FB923C;
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin-bottom: 24px;
+}
+.grace-banner-text {
+  margin: 0;
+  font-weight: 500;
+  color: #9A3412;
+}
+.grace-banner-meta {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #B45309;
+}
+.keep-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #4B5563;
+  cursor: pointer;
+  user-select: none;
+}
+.keep-toggle input[type="checkbox"] {
+  cursor: pointer;
+}

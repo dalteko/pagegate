@@ -40,6 +40,7 @@ try {
 //   tier_at_creation  — 1 (anonymous), 2 (account), 3 (Pro). Informational;
 //                       runtime crypto path is decided by `wrapped_key`.
 //   view_count        — incremented on each successful unlock.
+//   last_viewed_at    — timestamp of the most recent successful unlock.
 //   view_cap          — per-page cap. null = use the tier default at read time.
 //   is_public         — Pro-only: skip the password gate entirely.
 //   archived_at       — Phase 5 (Pro downgrade grace) hook; null = active.
@@ -47,9 +48,14 @@ for (const stmt of [
   `ALTER TABLE pages ADD COLUMN wrapped_key TEXT`,
   `ALTER TABLE pages ADD COLUMN tier_at_creation INTEGER`,
   `ALTER TABLE pages ADD COLUMN view_count INTEGER DEFAULT 0`,
+  `ALTER TABLE pages ADD COLUMN last_viewed_at TEXT`,
   `ALTER TABLE pages ADD COLUMN view_cap INTEGER`,
   `ALTER TABLE pages ADD COLUMN is_public INTEGER DEFAULT 0`,
   `ALTER TABLE pages ADD COLUMN archived_at TEXT`,
+  // Phase 5 (Pro downgrade grace): user's selection of which links to
+  // keep when grace ends. 1 = keep, 0 = drop. Auto-fallback to most-
+  // recent if none are selected by day 30.
+  `ALTER TABLE pages ADD COLUMN kept_after_grace INTEGER DEFAULT 0`,
 ]) {
   try { db.exec(stmt); } catch (e) { /* column already exists */ }
 }
@@ -150,12 +156,14 @@ const insertStmt = db.prepare(`
   INSERT INTO pages (
     id, password_hash, original_filename, file_size,
     created_at, expires_at, encryption_salt,
-    wrapped_key, tier_at_creation, view_cap, is_public
+    wrapped_key, tier_at_creation, view_cap, is_public,
+    last_viewed_at, kept_after_grace
   )
   VALUES (
     @id, @password_hash, @original_filename, @file_size,
     @created_at, @expires_at, @encryption_salt,
-    @wrapped_key, @tier_at_creation, @view_cap, @is_public
+    @wrapped_key, @tier_at_creation, @view_cap, @is_public,
+    @last_viewed_at, @kept_after_grace
   )
 `);
 
@@ -168,7 +176,7 @@ const getStmt = db.prepare(`
 `);
 
 const incrementViewCountStmt = db.prepare(`
-  UPDATE pages SET view_count = view_count + 1 WHERE id = ?
+  UPDATE pages SET view_count = view_count + 1, last_viewed_at = ? WHERE id = ?
 `);
 
 const selectExpiredStmt = db.prepare(`
@@ -239,8 +247,8 @@ const releaseStripeEventStmt = db.prepare(`
 `);
 const getUserPagesStmt = db.prepare(`
   SELECT id, original_filename, file_size, slug, created_at, expires_at,
-         view_count, view_cap, is_public, tier_at_creation, archived_at,
-         wrapped_key
+         view_count, last_viewed_at, view_cap, is_public, tier_at_creation, archived_at,
+         wrapped_key, kept_after_grace
     FROM pages WHERE user_id = ? ORDER BY created_at DESC
 `);
 // Count of a user's active (non-expired, non-archived) pages. Used to
@@ -263,6 +271,19 @@ const updatePageEncryptionSaltStmt = db.prepare(`UPDATE pages SET encryption_sal
 const updatePageIsPublicStmt = db.prepare(`UPDATE pages SET is_public = ? WHERE id = ?`);
 const updatePageViewCapStmt = db.prepare(`UPDATE pages SET view_cap = ? WHERE id = ?`);
 const updatePageFileSizeStmt = db.prepare(`UPDATE pages SET file_size = ?, original_filename = ? WHERE id = ?`);
+const setPageKeptStmt = db.prepare(`UPDATE pages SET kept_after_grace = ? WHERE id = ?`);
+const updatePageTierStmt = db.prepare(`UPDATE pages SET tier_at_creation = ? WHERE id = ?`);
+
+// Users whose grace period has ended and need Tier 2 enforcement applied.
+// is_pro = 0 (Stripe webhook flipped this on cancel/lapse), pro_expires_at
+// is set and in the past.
+const getLapsedProUsersStmt = db.prepare(`
+  SELECT * FROM users
+   WHERE is_pro = 0
+     AND pro_expires_at IS NOT NULL
+     AND pro_expires_at <> ''
+     AND pro_expires_at < ?
+`);
 
 // Atomic insert with owner and slug in a single transaction.
 // New tier-related columns default to safe values when omitted so legacy
@@ -280,6 +301,8 @@ const insertPageAtomicFn = db.transaction((page) => {
     tier_at_creation: page.tier_at_creation ?? null,
     view_cap: page.view_cap ?? null,
     is_public: page.is_public ? 1 : 0,
+    last_viewed_at: page.last_viewed_at ?? null,
+    kept_after_grace: page.kept_after_grace ? 1 : 0,
   });
   if (page.user_id) {
     setPageOwnerStmt.run(page.user_id, page.id);
@@ -302,7 +325,11 @@ const claimStripeEventFn = db.transaction((eventId, type) => {
 
 module.exports = {
   insertPage(page) {
-    return insertStmt.run(page);
+    return insertStmt.run({
+      last_viewed_at: null,
+      kept_after_grace: 0,
+      ...page,
+    });
   },
   getPage(id) {
     return getStmt.get(id, new Date().toISOString());
@@ -412,11 +439,20 @@ module.exports = {
   updatePageFile(pageId, fileSize, originalFilename) {
     return updatePageFileSizeStmt.run(fileSize, originalFilename, pageId);
   },
+  setPageKeptAfterGrace(pageId, keep) {
+    return setPageKeptStmt.run(keep ? 1 : 0, pageId);
+  },
+  updatePageTier(pageId, tier) {
+    return updatePageTierStmt.run(tier, pageId);
+  },
+  getLapsedProUsers() {
+    return getLapsedProUsersStmt.all(new Date().toISOString());
+  },
   insertPageAtomic(page) {
     return insertPageAtomicFn(page);
   },
   incrementViewCount(pageId) {
-    return incrementViewCountStmt.run(pageId);
+    return incrementViewCountStmt.run(new Date().toISOString(), pageId);
   },
   updatePagePasswordAndSalt(pageId, passwordHash, salt) {
     return updatePagePasswordAndSaltStmt.run(passwordHash, salt, pageId);
