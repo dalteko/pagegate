@@ -15,6 +15,10 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/style.css">
   <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.tagged-events.js"></script>
+  <!-- SSR-injected page metadata. Server-side `__PAGE_META__` placeholder
+       is replaced with a JSON literal at request time. Used to auto-unlock
+       public pages and hide the "Hosted on PageGate" footer for Pro pages. -->
+  <script id="pageMeta" type="application/json">"__PAGE_META__"</script>
 </head>
 <body>
   <div class="view-container" id="viewContainer">
@@ -35,7 +39,7 @@
       <a href="/" class="btn-secondary" style="display:block;text-align:center;text-decoration:none;margin-top:16px;">Go to PageGate</a>
     </div>
 
-    <footer class="view-footer">
+    <footer class="view-footer" id="viewFooter">
       <span>Hosted on <a href="/">PageGate</a></span>
       <a href="mailto:abuse@pagegate.io" class="report-link">Report this page</a>
     </footer>
@@ -55,6 +59,50 @@
       const expiredCard = document.getElementById('expiredCard');
       const viewContainer = document.getElementById('viewContainer');
       const contentFrame = document.getElementById('contentFrame');
+      const viewFooter = document.getElementById('viewFooter');
+
+      // Read SSR-injected metadata. Falls back to defaults if the server
+      // didn't replace the placeholder (e.g. an old cached view.html).
+      let pageMeta = { isPublic: false, hideFooter: false };
+      try {
+        const raw = document.getElementById('pageMeta')?.textContent || '';
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') pageMeta = parsed;
+      } catch { /* placeholder was not replaced — keep defaults */ }
+
+      // Pro pages hide the "Hosted on PageGate" footer.
+      if (pageMeta.hideFooter && viewFooter) viewFooter.style.display = 'none';
+
+      function renderHtml(html) {
+        viewContainer.classList.add('hidden');
+        contentFrame.classList.remove('hidden');
+        contentFrame.srcdoc = html;
+        if (window.plausible) plausible('Unlock', { props: { page: pageId } });
+      }
+
+      // Public pages: skip the password prompt and auto-fetch on load.
+      if (pageMeta.isPublic) {
+        promptCard.classList.add('hidden');
+        (async () => {
+          try {
+            const res = await fetch(`/api/verify/${pageId}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            });
+            if (res.ok) {
+              renderHtml((await res.json()).html);
+            } else {
+              expiredCard.classList.remove('hidden');
+              const copy = document.getElementById('expiredCopy');
+              if (copy && res.status === 410) copy.textContent = 'This page has reached its view limit.';
+            }
+          } catch {
+            expiredCard.classList.remove('hidden');
+          }
+        })();
+        return;
+      }
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -77,14 +125,10 @@
           });
 
           if (res.ok) {
-            const data = await res.json();
             // Render in sandboxed iframe — no allow-same-origin, so the
             // uploaded content cannot access PageGate's origin, localStorage,
             // cookies, or API endpoints.
-            viewContainer.classList.add('hidden');
-            contentFrame.classList.remove('hidden');
-            contentFrame.srcdoc = data.html;
-            if (window.plausible) plausible('Unlock', { props: { page: pageId } });
+            renderHtml((await res.json()).html);
           } else if (res.status === 401) {
             errorMsg.textContent = 'Wrong password';
             errorMsg.classList.remove('hidden');

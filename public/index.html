@@ -131,6 +131,18 @@
             <option value="never">Never</option>
           </select>
         </div>
+        <div class="input-group">
+          <label for="viewCapInput">View limit <span class="label-hint">(optional)</span></label>
+          <input type="number" id="viewCapInput" min="1" placeholder="1000" autocomplete="off">
+          <p class="field-hint">Page locks once it reaches this many views. Leave blank to use the default (1,000).</p>
+        </div>
+        <div class="input-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="isPublicInput">
+            <span>Public page <span class="label-hint">(no password)</span></span>
+          </label>
+          <p class="field-hint">Anyone with the link can view it. Skips the password prompt entirely.</p>
+        </div>
       </div>
       <div class="input-group">
         <label for="passwordInput">Set a password</label>
