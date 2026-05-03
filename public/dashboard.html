@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Your pages — PageGate</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=phase7">
+  <link rel="stylesheet" href="style.css?v=phase7-2">
   <script
     data-clerk-publishable-key="__CLERK_PUBLISHABLE_KEY__"
     id="clerk-script"
@@ -65,7 +65,7 @@
       <!-- Auth required (Clerk not signed in) -->
       <div class="pg-auth-required hidden" id="dashAuthRequired">
         <p>Sign in to see <em style="font-style:italic;color:var(--rb-accent)">your pages</em>.</p>
-        <p class="pg-auth-required-sub">A free account gives you a dashboard, 7-day expirations, and 1,000 views per page.</p>
+        <p class="pg-auth-required-sub">A free account gives you a dashboard, 7-day expirations, and link password reset.</p>
         <button class="rb-cta" id="dashSignInBtn" type="button">Sign in</button>
       </div>
 
@@ -119,7 +119,7 @@
         <h3>Edit page</h3>
         <button class="modal-close" id="editCloseBtn" type="button" aria-label="Close">×</button>
       </div>
-      <p class="modal-note">Fields are prefilled with the current values. Clearing the slug or view limit removes the custom value (the URL reverts to a random nanoid; the cap reverts to the tier default).</p>
+      <p class="modal-note">Fields are prefilled with the current values. Clearing the slug reverts the URL to a random nanoid.</p>
       <div class="modal-body">
         <div class="input-group">
           <label for="editFileInput">Replace HTML <span class="label-hint">optional</span></label>
@@ -144,11 +144,6 @@
             <option value="365">1 year from now</option>
             <option value="never">Never</option>
           </select>
-        </div>
-        <div class="input-group">
-          <label for="editViewCapInput">View limit</label>
-          <input type="number" id="editViewCapInput" min="1" placeholder="1000" autocomplete="off">
-          <p class="field-hint">Leave blank to clear the cap and fall back to the Pro default.</p>
         </div>
         <div class="input-group">
           <label class="checkbox-label">
@@ -234,7 +229,6 @@
     const editSlugInput = document.getElementById('editSlugInput');
     const editSlugHint = document.getElementById('editSlugHint');
     const editExpirationSelect = document.getElementById('editExpirationSelect');
-    const editViewCapInput = document.getElementById('editViewCapInput');
     const editIsPublicInput = document.getElementById('editIsPublicInput');
     const editModalError = document.getElementById('editModalError');
     const editCancelBtn = document.getElementById('editCancelBtn');
@@ -465,12 +459,7 @@
         });
 
         const views = page.viewCount || 0;
-        const cap = page.viewCap;
-        const pct = cap ? Math.min(1, views / cap) : 0;
-        const near = cap ? pct >= 0.8 : false;
-        const viewsHtml = cap != null
-          ? `<span class="pg-page-views-num">${views.toLocaleString()}</span><span class="pg-page-views-cap">/ ${cap.toLocaleString()}</span>`
-          : `<span class="pg-page-views-num">${views.toLocaleString()}</span>`;
+        const viewsHtml = `<span class="pg-page-views-num">${views.toLocaleString()}</span>`;
 
         const tags = [];
         if (page.isPublic) tags.push(`<span class="pg-tag pg-tag--public">Public</span>`);
@@ -493,7 +482,6 @@
           id: page.id,
           slug: page.slug,
           isPublic: page.isPublic,
-          viewCapExplicit: page.viewCapExplicit ?? null,
         });
 
         li.innerHTML = `
@@ -517,10 +505,6 @@
           <div class="pg-page-views">
             ${viewsHtml}
             <div class="pg-page-views-label">views</div>
-            ${cap != null ? `
-              <div class="pg-page-views-bar ${near ? 'near' : ''}">
-                <div class="pg-page-views-bar-fill" style="width:${(pct * 100).toFixed(0)}%"></div>
-              </div>` : ''}
           </div>
           <div class="pg-page-actions">
             ${graceState.inGrace ? `
@@ -597,7 +581,6 @@
         editSlugHint.textContent = '';
         editSlugHint.className = 'field-hint';
         editExpirationSelect.value = '';
-        editViewCapInput.value = meta.viewCapExplicit != null ? String(meta.viewCapExplicit) : '';
         editIsPublicInput.checked = !!meta.isPublic;
         editModalError.classList.add('hidden');
         editModal.classList.remove('hidden');
@@ -704,14 +687,13 @@
       const fd = new FormData();
       // File and expiration are only sent when the user picks one (the
       // file input starts empty, the expiration <select> defaults to "Keep
-      // current"). Slug, view cap, and isPublic are always sent — they're
-      // prefilled from the row, so re-submitting the prefilled value is a
-      // no-op. Empty string on slug or viewCap is the sentinel for
-      // "clear this field"; the server distinguishes undefined from empty.
+      // current"). Slug and isPublic are always sent — they're prefilled
+      // from the row, so re-submitting the prefilled value is a no-op.
+      // Empty string on slug is the sentinel for "clear this field"; the
+      // server distinguishes undefined from empty.
       if (editFileInput.files[0]) fd.append('file', editFileInput.files[0]);
       fd.append('slug', editSlugInput.value.trim().toLowerCase());
       if (editExpirationSelect.value) fd.append('expiration', editExpirationSelect.value);
-      fd.append('viewCap', editViewCapInput.value.trim());
       fd.append('isPublic', editIsPublicInput.checked ? 'true' : 'false');
 
       editSaveBtn.disabled = true;

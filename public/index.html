@@ -4,16 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PageGate — Share private HTML pages in seconds</title>
-  <meta name="description" content="Drop in an HTML file and share it behind a password. Anonymous links use password-derived encryption; account and Pro pages add dashboard recovery, custom URLs, and edit-in-place.">
-  <meta property="og:title" content="PageGate — Password-protect any HTML page">
-  <meta property="og:description" content="Share a private HTML page with anonymous encryption, account recovery, and Pro publishing tools.">
+  <meta name="description" content="Drop in an HTML file and share it as a link — with an optional password. Anonymous, account, and Pro tiers, all encrypted at rest.">
+  <meta property="og:title" content="PageGate — Share an HTML page in seconds">
+  <meta property="og:description" content="Share a private HTML page with an optional password. Account recovery and Pro publishing tools.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://pagegate.app">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="PageGate — Password-protect any HTML page">
-  <meta name="twitter:description" content="Share a private HTML page with anonymous encryption, account recovery, and Pro publishing tools.">
+  <meta name="twitter:title" content="PageGate — Share an HTML page in seconds">
+  <meta name="twitter:description" content="Share a private HTML page with an optional password. Account recovery and Pro publishing tools.">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=phase7">
+  <link rel="stylesheet" href="style.css?v=phase7-2">
   <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.tagged-events.js"></script>
   <script
     data-clerk-publishable-key="__CLERK_PUBLISHABLE_KEY__"
@@ -54,7 +54,7 @@
 
       <div class="rb-card" id="uploadCard">
         <div class="rb-card-head">
-          <span class="rb-card-title" id="cardTitle">4. Get a shareable link with a password</span>
+          <span class="rb-card-title" id="cardTitle">4. Get a shareable link</span>
           <span class="rb-card-step" id="cardStep">Easy mode</span>
         </div>
 
@@ -80,7 +80,7 @@
           </div>
 
           <button class="btn-paste-toggle" id="pasteToggleBtn" type="button">or paste HTML code</button>
-          <p class="upload-tagline" id="uploadTagline">No account needed · Anonymous links last 1 day · 300 views.</p>
+          <p class="upload-tagline" id="uploadTagline">No account needed · Anonymous links last 1 day.</p>
         </section>
 
         <!-- State B: file loaded — preview + form -->
@@ -114,25 +114,22 @@
                 <option value="never">Never</option>
               </select>
             </div>
-            <div class="input-group">
-              <label for="viewCapInput">View limit <span class="label-hint">optional</span></label>
-              <input type="number" id="viewCapInput" min="1" placeholder="1000" autocomplete="off">
-              <p class="field-hint">Page locks once it reaches this many views. Leave blank for the Pro default of 1,000.</p>
-            </div>
-            <div class="input-group">
-              <label class="checkbox-label">
-                <input type="checkbox" id="isPublicInput">
-                <span>Public page <span class="label-hint">no password</span></span>
-              </label>
-              <p class="field-hint">Anyone with the link can view it. Pages are still encrypted at rest.</p>
-            </div>
           </div>
 
           <div class="input-group">
+            <label class="toggle-label" for="passwordToggle">
+              <input type="checkbox" id="passwordToggle">
+              <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+              <span class="toggle-text">Password-protect this page</span>
+            </label>
+            <p class="field-hint">Off by default — anyone with the link can open it. Toggle on to require a password.</p>
+          </div>
+
+          <div class="input-group hidden" id="passwordGroup">
             <label for="passwordInput">Set a password</label>
             <input type="password" id="passwordInput" placeholder="Choose a passphrase" autocomplete="off">
           </div>
-          <div class="input-group">
+          <div class="input-group hidden" id="confirmPasswordGroup">
             <label for="confirmPasswordInput">Confirm password</label>
             <input type="password" id="confirmPasswordInput" placeholder="Type it again" autocomplete="off">
             <p class="field-hint" id="confirmHint"></p>
@@ -177,10 +174,8 @@
           <ul>
             <li>One-off links</li>
             <li>Pages last 1 day</li>
-            <li>300 views per page</li>
             <li>Random URL</li>
-            <li>Password-protected</li>
-            <li>Password-derived encryption</li>
+            <li>Optional password</li>
             <li>Shown once: lose the link, lose the page</li>
             <li>Includes PageGate footer</li>
           </ul>
@@ -194,10 +189,10 @@
           <ul>
             <li>3 active links</li>
             <li>Pages last 7 days</li>
-            <li>1,000 views per page</li>
             <li>Dashboard with all your links</li>
             <li>Link password reset</li>
             <li>Random URL</li>
+            <li>Optional password</li>
             <li>Includes PageGate footer</li>
           </ul>
           <button type="button" class="rb-price-btn" id="signUpFreeBtn">Sign up free</button>
@@ -212,10 +207,8 @@
             <li>100 active links</li>
             <li>Custom expiry, up to forever</li>
             <li>Custom URLs</li>
-            <li>Public pages</li>
             <li>Edit pages after uploading</li>
             <li>View counts per page</li>
-            <li>Custom view limits per page</li>
             <li>No PageGate footer</li>
           </ul>
           <button type="button" class="rb-price-btn" id="goProBtn3">Go pro</button>

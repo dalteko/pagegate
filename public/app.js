@@ -20,8 +20,6 @@
   const slugInput = document.getElementById('slugInput');
   const slugHint = document.getElementById('slugHint');
   const expirationSelect = document.getElementById('expirationSelect');
-  const viewCapInput = document.getElementById('viewCapInput');
-  const isPublicInput = document.getElementById('isPublicInput');
   const uploadTagline = document.getElementById('uploadTagline');
 
   async function initClerk() {
@@ -91,11 +89,11 @@
   function updateUploadTagline() {
     if (!uploadTagline) return;
     if (!currentUser) {
-      uploadTagline.textContent = 'No account needed · Anonymous links last 1 day · 300 views.';
+      uploadTagline.textContent = 'No account needed · Anonymous links last 1 day.';
     } else if (currentUser.isPro) {
       uploadTagline.textContent = 'Pro · Custom URL, expiry up to forever, edit-in-place.';
     } else {
-      uploadTagline.textContent = 'Free account · 3 active links · 7-day expiry · 1,000 views.';
+      uploadTagline.textContent = 'Free account · 3 active links · 7-day expiry.';
     }
   }
 
@@ -194,6 +192,9 @@
   const previewFilename = document.getElementById('previewFilename');
   const removeFileBtn = document.getElementById('removeFile');
   const passwordSection = document.getElementById('passwordSection');
+  const passwordToggle = document.getElementById('passwordToggle');
+  const passwordGroup = document.getElementById('passwordGroup');
+  const confirmPasswordGroup = document.getElementById('confirmPasswordGroup');
   const passwordInput = document.getElementById('passwordInput');
   const confirmPasswordInput = document.getElementById('confirmPasswordInput');
   const confirmHint = document.getElementById('confirmHint');
@@ -285,9 +286,8 @@
       previewSection.classList.remove('hidden');
       passwordSection.classList.remove('hidden');
       resultSection.classList.add('hidden');
-      if (cardStep) cardStep.textContent = '02 / Set a password';
+      if (cardStep) cardStep.textContent = '02 / Almost there';
       fileInfo.textContent = '';
-      setTimeout(() => passwordInput.focus(), 200);
     };
     reader.readAsText(file);
   }
@@ -305,10 +305,9 @@
     if (slugInput) slugInput.value = '';
     if (slugHint) { slugHint.textContent = ''; slugHint.className = 'field-hint'; }
     if (expirationSelect) expirationSelect.value = '30';
-    if (viewCapInput) viewCapInput.value = '';
-    if (isPublicInput) {
-      isPublicInput.checked = false;
-      applyPublicToggle();
+    if (passwordToggle) {
+      passwordToggle.checked = false;
+      applyPasswordToggle();
     }
     fileInfo.textContent = '';
     previewFrame.srcdoc = '';
@@ -328,17 +327,16 @@
 
   // === Generate link ===
   generateBtn?.addEventListener('click', async () => {
+    const wantsPassword = !!passwordToggle?.checked;
     const password = passwordInput.value.trim();
     const confirmPassword = confirmPasswordInput?.value.trim();
-    const wantsPublic = !!(currentUser?.isPro && isPublicInput?.checked);
 
-    // Public Pro pages skip the password gate; everyone else needs one.
-    if (!wantsPublic && !password) {
+    if (wantsPassword && !password) {
       passwordInput.style.borderColor = 'var(--rb-error)';
       passwordInput.focus();
       return;
     }
-    if (!wantsPublic && confirmPasswordInput && password !== confirmPassword) {
+    if (wantsPassword && confirmPasswordInput && password !== confirmPassword) {
       confirmPasswordInput.style.borderColor = 'var(--rb-error)';
       if (confirmHint) {
         confirmHint.textContent = 'Passwords don’t match.';
@@ -357,17 +355,16 @@
     try {
       const formData = new FormData();
       formData.append('file', currentFile);
-      formData.append('password', password);
-      if (confirmPassword !== undefined) formData.append('confirmPassword', confirmPassword);
-      if (wantsPublic) formData.append('isPublic', 'true');
+      if (wantsPassword) {
+        formData.append('password', password);
+        if (confirmPassword !== undefined) formData.append('confirmPassword', confirmPassword);
+      }
 
       if (currentUser?.isPro) {
         const slug = slugInput?.value.trim().toLowerCase();
         if (slug) formData.append('slug', slug);
         const expiration = expirationSelect?.value;
         if (expiration) formData.append('expiration', expiration);
-        const viewCap = viewCapInput?.value.trim();
-        if (viewCap) formData.append('viewCap', viewCap);
       }
 
       const headers = {};
@@ -386,15 +383,16 @@
 
       const expDate = new Date(data.expiresAt);
       linkOutput.value = data.url;
+      const lockLabel = wantsPassword ? 'Password-locked' : 'Public link';
       if (expDate.getFullYear() >= 9999) {
-        expirationNote.textContent = 'Password-locked · never expires.';
+        expirationNote.textContent = `${lockLabel} · never expires.`;
       } else {
         const expStr = expDate.toLocaleDateString('en-US', {
           month: 'long',
           day: 'numeric',
           year: 'numeric',
         });
-        expirationNote.textContent = `Password-locked · expires ${expStr}.`;
+        expirationNote.textContent = `${lockLabel} · expires ${expStr}.`;
       }
       previewSection.classList.add('hidden');
       passwordSection.classList.add('hidden');
@@ -455,22 +453,24 @@
     }
   });
 
-  // === Public-page toggle ===
-  // Hides the password+confirm inputs entirely. The server enforces the
-  // same rule; this is just so the form doesn't ask for something that
-  // won't be used.
-  function applyPublicToggle() {
-    const publicMode = !!isPublicInput?.checked;
-    const passwordGroup = passwordInput?.closest('.input-group');
-    const confirmGroup = confirmPasswordInput?.closest('.input-group');
-    if (passwordGroup) passwordGroup.classList.toggle('hidden', publicMode);
-    if (confirmGroup) confirmGroup.classList.toggle('hidden', publicMode);
-    if (publicMode) {
+  // === Password toggle ===
+  // Off by default — pages are public unless the user opts into a password.
+  // Toggling off clears any typed password so we don't accidentally submit it.
+  function applyPasswordToggle() {
+    const wantsPassword = !!passwordToggle?.checked;
+    if (passwordGroup) passwordGroup.classList.toggle('hidden', !wantsPassword);
+    if (confirmPasswordGroup) confirmPasswordGroup.classList.toggle('hidden', !wantsPassword);
+    if (!wantsPassword) {
       passwordInput.value = '';
       if (confirmPasswordInput) confirmPasswordInput.value = '';
+      passwordInput.style.borderColor = '';
+      if (confirmPasswordInput) confirmPasswordInput.style.borderColor = '';
+      if (confirmHint) { confirmHint.textContent = ''; confirmHint.className = 'field-hint'; }
+    } else {
+      setTimeout(() => passwordInput.focus(), 50);
     }
   }
-  isPublicInput?.addEventListener('change', applyPublicToggle);
+  passwordToggle?.addEventListener('change', applyPasswordToggle);
 
   // === Slug validation — keep in sync with tiers.PRO_SLUG_REGEX. ===
   // Spec: 3+ hyphenated word groups, each ≥ 2 chars, lowercase alphanumeric,

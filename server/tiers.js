@@ -19,30 +19,26 @@ const RULES = Object.freeze({
   [TIER.ANONYMOUS]: Object.freeze({
     label: 'Anonymous',
     expiryDays: 1,            // fixed
-    viewCap: 300,             // fixed
-    viewCapConfigurable: false,
     maxLinks: null,           // unlimited create, but ephemeral
     fileSizeMb: 10,
     customSlug: false,
     customExpiry: false,
-    allowPublic: false,       // password always required
+    allowPublic: true,        // password optional via toggle
     editInPlace: false,
     analytics: false,
     passwordReset: false,     // forgotten = lost
     showInDashboard: false,   // shown once at upload, never again
-    footerHidden: false,      // "Made with PageGate" shown
-    cryptoMode: 'password',   // page key derived from page password (zero-knowledge)
+    footerHidden: false,      // "Hosted by pagegate.app" shown
+    cryptoMode: 'password',   // password-protected anon → zero-knowledge; no-password anon falls back to wrapped
   }),
   [TIER.ACCOUNT]: Object.freeze({
     label: 'Account',
     expiryDays: 7,            // fixed
-    viewCap: 1000,            // fixed
-    viewCapConfigurable: false,
     maxLinks: 3,              // hard cap; cannot delete, must wait for expiry
     fileSizeMb: 10,
     customSlug: false,
     customExpiry: false,
-    allowPublic: false,
+    allowPublic: true,
     editInPlace: false,
     analytics: false,
     passwordReset: true,      // server-held key allows reset without old password
@@ -53,9 +49,6 @@ const RULES = Object.freeze({
   [TIER.PRO]: Object.freeze({
     label: 'Pro',
     expiryDays: null,         // user-set, up to "forever"
-    viewCap: null,            // user-set per link
-    viewCapDefault: 1000,
-    viewCapConfigurable: true,
     maxLinks: 100,
     fileSizeMb: 10,
     customSlug: true,

@@ -219,26 +219,20 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     }
   });
 
-  await check('Pro pages with no explicit cap fall back to the 1,000-view default', async () => {
+  await check('Pages with no cap unlock indefinitely (view caps removed)', async () => {
     const publicId = 'PubCap01';
     insertPublicWrappedPage({
       id: publicId,
       html: '<!doctype html><h1>public cap</h1>',
       viewCap: null,
-      viewCount: 999,
+      viewCount: 9999,
     });
-    const ok = await fetch(`${base}/api/verify/${publicId}`, {
+    const r = await fetch(`${base}/api/verify/${publicId}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}),
     });
-    assertStatus(ok.status, 200, 'public verify at 999 views');
-    const capped = await fetch(`${base}/api/verify/${publicId}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    assertStatus(capped.status, 410, 'public verify at default cap');
+    assertStatus(r.status, 200, 'public verify well past former 1k default');
   });
 
   await check('Stripe checkout route is wired up (no 5xx)', async () => {

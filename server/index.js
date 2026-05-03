@@ -257,20 +257,12 @@ function findLivePage(pageIdOrSlug) {
   return page;
 }
 
-function effectiveViewCap(page) {
-  if (page.view_cap !== null && page.view_cap !== undefined) return page.view_cap;
-  const tierAtCreation = page.tier_at_creation || tiers.TIER.ANONYMOUS;
-  const rule = tiers.RULES[tierAtCreation];
-  return rule.viewCap ?? rule.viewCapDefault ?? null;
-}
-
 // Rate limiter for password verification: 10 attempts per IP per page per hour
 const verifyLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 10,
-  // Public Pro pages have no password to brute-force. They are still gated
-  // by the per-page view cap in the handler, but should not trip the
-  // password-attempt limiter on normal refreshes.
+  // Public pages have no password to brute-force, so refreshes shouldn't
+  // count against the limiter.
   skip: (req) => !!findLivePage(req.params.pageId)?.is_public,
   keyGenerator: (req) => `${req.ip}-${req.params.pageId}`,
   message: { error: 'Too many attempts. Try again later.' },
@@ -294,17 +286,15 @@ app.post('/api/upload', uploadHtmlFile, async (req, res) => {
     const confirmPassword = req.body.confirmPassword;
     const slug = req.body.slug?.trim().toLowerCase();
     const expiration = req.body.expiration;
-    const isPublic = req.body.isPublic === 'true' || req.body.isPublic === true;
-    const viewCapRaw = req.body.viewCap;
+    // is_public is the inverse of "the user set a password". Password is
+    // optional across every tier; toggling it on stores a bcrypt hash and
+    // requires unlock at view time, off makes the link directly viewable.
+    const hasPassword = !!(password && password.trim());
+    const isPublic = !hasPassword;
 
     if (!file) return res.status(400).json({ error: 'No file provided' });
-    // Public pages skip the password gate entirely. Password-protected
-    // pages still require it (and confirm-password if supplied).
-    if (!isPublic) {
-      if (!password || !password.trim()) return res.status(400).json({ error: 'Password is required' });
-      if (confirmPassword !== undefined && confirmPassword !== password) {
-        return res.status(400).json({ error: 'Passwords do not match' });
-      }
+    if (hasPassword && confirmPassword !== undefined && confirmPassword !== password) {
+      return res.status(400).json({ error: 'Passwords do not match' });
     }
 
     // Validate HTML file
@@ -321,22 +311,6 @@ app.post('/api/upload', uploadHtmlFile, async (req, res) => {
     const isPro = isUserPro(user);
     const tier = tiers.tierFor(user, { isProActive: isUserPro });
     const tierRule = tiers.RULES[tier];
-
-    // Pro-only fields. Returning 403 early so the user gets a precise
-    // error rather than something silently dropped.
-    if (isPublic && !tierRule.allowPublic) {
-      return res.status(403).json({ error: 'Public pages require Pro' });
-    }
-    let viewCapValue = null;
-    if (viewCapRaw !== undefined && viewCapRaw !== null && viewCapRaw !== '') {
-      if (!tierRule.viewCapConfigurable) {
-        return res.status(403).json({ error: 'Custom view caps require Pro' });
-      }
-      viewCapValue = parseInt(viewCapRaw, 10);
-      if (!Number.isFinite(viewCapValue) || viewCapValue < 1) {
-        return res.status(400).json({ error: 'View cap must be a positive integer' });
-      }
-    }
 
     // Per-tier link cap. Tier 1 = unlimited (rule is null). Tier 2 = 3,
     // Tier 3 = 100. Tier 2 cannot delete by design — must wait for expiry.
@@ -386,20 +360,23 @@ app.post('/api/upload', uploadHtmlFile, async (req, res) => {
     }
 
     const pageId = crypto.randomBytes(6).toString('base64url').slice(0, 8);
-    // Public pages still get a non-null password_hash (the column is NOT
-    // NULL) — empty string is a sentinel that the verify route will never
-    // reach since is_public short-circuits the bcrypt check.
-    const passwordHash = isPublic ? '' : await bcrypt.hash(password.trim(), 10);
+    // password_hash is NOT NULL — when a page has no password (is_public)
+    // we store an empty string sentinel. The verify route checks is_public
+    // first and short-circuits before bcrypt, so the sentinel is never read.
+    const passwordHash = hasPassword ? await bcrypt.hash(password.trim(), 10) : '';
 
-    // Pick the crypto path by tier (see crypto.js header for the why).
-    // Anonymous → password-derived (zero-knowledge). Account/Pro →
-    // master-key wrapped, so account-driven password reset is possible.
+    // Pick the crypto path:
+    //   Anonymous + password → password-derived (zero-knowledge)
+    //   anything else        → master-key wrapped (server can decrypt;
+    //                          required for account-driven reset and for
+    //                          any no-password page since there's no
+    //                          password to derive a key from)
     const html = storage.prepareHtml(file.buffer);
 
     let encryptionSalt = null;
     let wrappedKey = null;
     let blob;
-    if (tier === tiers.TIER.ANONYMOUS) {
+    if (tier === tiers.TIER.ANONYMOUS && hasPassword) {
       const out = cryptoLib.encryptWithPassword(html, password.trim());
       blob = out.blob;
       encryptionSalt = out.saltBase64;
@@ -409,13 +386,6 @@ app.post('/api/upload', uploadHtmlFile, async (req, res) => {
       wrappedKey = cryptoLib.wrapPageKey(pageKey);
     }
     storage.savePageBlob(pageId, blob);
-
-    // Per-link view cap. Pro: user-set, falling back to viewCapDefault
-    // (1,000) so analytics work out of the box. Other tiers: leave null
-    // and let the read-time tier-rule lookup handle it.
-    const viewCapPersisted = tier === tiers.TIER.PRO
-      ? (viewCapValue ?? tierRule.viewCapDefault)
-      : null;
 
     try {
       db.insertPageAtomic({
@@ -431,7 +401,7 @@ app.post('/api/upload', uploadHtmlFile, async (req, res) => {
         user_id: userId || null,
         slug: slug || null,
         is_public: isPublic,
-        view_cap: viewCapPersisted,
+        view_cap: null,
       });
     } catch (err) {
       // Clean up the encrypted file since DB insert failed
@@ -453,9 +423,8 @@ app.post('/api/upload', uploadHtmlFile, async (req, res) => {
 });
 
 // POST /api/verify/:pageId — verify password and return HTML (supports pageId or slug).
-// For public pages (Pro feature), the password gate is skipped — the route
-// still runs view-cap enforcement and increments the view count, since
-// those apply uniformly to all unlocks.
+// Public pages (no password) skip the password gate. Every unlock still
+// increments view_count for Pro analytics.
 app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
   try {
     const { pageId } = req.params;
@@ -468,14 +437,6 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
       if (!password) return res.status(400).json({ error: 'Password is required' });
       const match = await bcrypt.compare(password, page.password_hash);
       if (!match) return res.status(401).json({ error: 'Wrong password' });
-    }
-
-    // View-cap enforcement. The per-page `view_cap` column wins if set;
-    // otherwise fall back to the tier rule/default. A null effective cap
-    // means unlimited.
-    const cap = effectiveViewCap(page);
-    if (cap !== null && cap !== undefined && (page.view_count || 0) >= cap) {
-      return res.status(410).json({ error: 'View limit reached', reason: 'view_cap' });
     }
 
     const html = decryptPage(page, password);
@@ -658,7 +619,6 @@ app.get('/api/pages', async (req, res) => {
   const pages = db.getUserPages(auth.userId);
   res.json(pages.map(p => {
     const tier = p.tier_at_creation || tiers.TIER.ANONYMOUS;
-    const cap = effectiveViewCap(p);
     return {
       id: p.id,
       filename: p.original_filename,
@@ -668,11 +628,6 @@ app.get('/api/pages', async (req, res) => {
       expiresAt: p.expires_at,
       viewCount: p.view_count || 0,
       lastViewedAt: p.last_viewed_at || null,
-      viewCap: cap,
-      // Raw DB value (null when no explicit cap). The edit modal uses this
-      // to distinguish "no cap set" from "cap set to the tier default" —
-      // a no-op save would otherwise pin the page to the current default.
-      viewCapExplicit: p.view_cap,
       isPublic: !!p.is_public,
       tier,
       // Per-action capability flags so the dashboard can render the
@@ -831,7 +786,6 @@ app.post('/api/pages/:pageId/keep', async (req, res) => {
 //   expiration  — option from EXPIRATION_OPTIONS. Recomputes expires_at
 //                 from now.
 //   isPublic    — 'true' / 'false'. Toggles password gating.
-//   viewCap     — positive integer or '' to clear (fall back to default).
 app.patch('/api/pages/:pageId', uploadHtmlFile, async (req, res) => {
   try {
     const auth = getRequiredProUser(req, res);
@@ -901,23 +855,6 @@ app.patch('/api/pages/:pageId', uploadHtmlFile, async (req, res) => {
       const wantsPublic = req.body.isPublic === 'true' || req.body.isPublic === true;
       db.updatePageIsPublic(page.id, wantsPublic);
       updates.isPublic = wantsPublic;
-    }
-
-    // --- View cap ---
-    if (req.body.viewCap !== undefined) {
-      const raw = String(req.body.viewCap).trim();
-      if (raw === '') {
-        // Empty string clears the cap → fall back to tier default at read time.
-        db.updatePageViewCap(page.id, null);
-        updates.viewCap = null;
-      } else {
-        const parsed = parseInt(raw, 10);
-        if (!Number.isFinite(parsed) || parsed < 1) {
-          return res.status(400).json({ error: 'View cap must be a positive integer' });
-        }
-        db.updatePageViewCap(page.id, parsed);
-        updates.viewCap = parsed;
-      }
     }
 
     res.json({ ok: true, updates });
