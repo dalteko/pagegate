@@ -29,6 +29,46 @@ try {
   // Column already exists — ignore
 }
 
+// === Tiered-plan migration (added 2026-04-28; see docs/PRD.md, docs/TIERS.md)
+//
+// Each ALTER is wrapped in try/catch to make this migration idempotent —
+// matches the pattern used elsewhere in this file. Adding a new column?
+// Append another guarded ALTER below; do not rewrite the CREATE TABLE.
+//
+//   wrapped_key       — base64 of page key wrapped with PAGE_KEY_MASTER.
+//                       null = password-derived (Tier 1 / legacy).
+//   tier_at_creation  — 1 (anonymous), 2 (account), 3 (Pro). Informational;
+//                       runtime crypto path is decided by `wrapped_key`.
+//   view_count        — incremented on each successful unlock.
+//   view_cap          — per-page cap. null = use the tier default at read time.
+//   is_public         — Pro-only: skip the password gate entirely.
+//   archived_at       — Phase 5 (Pro downgrade grace) hook; null = active.
+for (const stmt of [
+  `ALTER TABLE pages ADD COLUMN wrapped_key TEXT`,
+  `ALTER TABLE pages ADD COLUMN tier_at_creation INTEGER`,
+  `ALTER TABLE pages ADD COLUMN view_count INTEGER DEFAULT 0`,
+  `ALTER TABLE pages ADD COLUMN view_cap INTEGER`,
+  `ALTER TABLE pages ADD COLUMN is_public INTEGER DEFAULT 0`,
+  `ALTER TABLE pages ADD COLUMN archived_at TEXT`,
+]) {
+  try { db.exec(stmt); } catch (e) { /* column already exists */ }
+}
+
+// Backfill tier_at_creation for legacy rows. Best-effort:
+//   - rows with a user_id were created under the existing Pro plumbing → 3
+//   - rows without a user_id were anonymous uploads → 1
+// Pages that pre-date the tiered plan model don't fit perfectly (their
+// limits weren't enforced), but `tier_at_creation` is informational; the
+// live crypto path is driven by `wrapped_key`.
+db.exec(`
+  UPDATE pages SET tier_at_creation = 3
+   WHERE tier_at_creation IS NULL AND user_id IS NOT NULL
+`);
+db.exec(`
+  UPDATE pages SET tier_at_creation = 1
+   WHERE tier_at_creation IS NULL AND user_id IS NULL
+`);
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS feedback (
     id TEXT PRIMARY KEY,
@@ -107,8 +147,16 @@ db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug) WHERE s
 
 
 const insertStmt = db.prepare(`
-  INSERT INTO pages (id, password_hash, original_filename, file_size, created_at, expires_at, encryption_salt)
-  VALUES (@id, @password_hash, @original_filename, @file_size, @created_at, @expires_at, @encryption_salt)
+  INSERT INTO pages (
+    id, password_hash, original_filename, file_size,
+    created_at, expires_at, encryption_salt,
+    wrapped_key, tier_at_creation, view_cap, is_public
+  )
+  VALUES (
+    @id, @password_hash, @original_filename, @file_size,
+    @created_at, @expires_at, @encryption_salt,
+    @wrapped_key, @tier_at_creation, @view_cap, @is_public
+  )
 `);
 
 const updatePagePasswordAndSaltStmt = db.prepare(`
@@ -117,6 +165,10 @@ const updatePagePasswordAndSaltStmt = db.prepare(`
 
 const getStmt = db.prepare(`
   SELECT * FROM pages WHERE id = ? AND expires_at > ?
+`);
+
+const incrementViewCountStmt = db.prepare(`
+  UPDATE pages SET view_count = view_count + 1 WHERE id = ?
 `);
 
 const selectExpiredStmt = db.prepare(`
@@ -186,7 +238,9 @@ const releaseStripeEventStmt = db.prepare(`
   DELETE FROM stripe_events WHERE id = ? AND (processed_at IS NULL OR processed_at = '')
 `);
 const getUserPagesStmt = db.prepare(`
-  SELECT id, original_filename, file_size, slug, created_at, expires_at FROM pages WHERE user_id = ? ORDER BY created_at DESC
+  SELECT id, original_filename, file_size, slug, created_at, expires_at,
+         view_count, view_cap, is_public, tier_at_creation, archived_at
+    FROM pages WHERE user_id = ? ORDER BY created_at DESC
 `);
 const setPageOwnerStmt = db.prepare(`UPDATE pages SET user_id = ? WHERE id = ?`);
 const getPageBySlugStmt = db.prepare(`SELECT * FROM pages WHERE slug = ? AND expires_at > ?`);
@@ -197,7 +251,9 @@ const getPageByIdOnlyStmt = db.prepare(`SELECT * FROM pages WHERE id = ?`);
 const updatePageExpirationStmt = db.prepare(`UPDATE pages SET expires_at = ? WHERE id = ?`);
 const updatePageEncryptionSaltStmt = db.prepare(`UPDATE pages SET encryption_salt = ? WHERE id = ?`);
 
-// Atomic insert with owner and slug in a single transaction
+// Atomic insert with owner and slug in a single transaction.
+// New tier-related columns default to safe values when omitted so legacy
+// callers (and tests) keep working.
 const insertPageAtomicFn = db.transaction((page) => {
   insertStmt.run({
     id: page.id,
@@ -206,7 +262,11 @@ const insertPageAtomicFn = db.transaction((page) => {
     file_size: page.file_size,
     created_at: page.created_at,
     expires_at: page.expires_at,
-    encryption_salt: page.encryption_salt,
+    encryption_salt: page.encryption_salt ?? null,
+    wrapped_key: page.wrapped_key ?? null,
+    tier_at_creation: page.tier_at_creation ?? null,
+    view_cap: page.view_cap ?? null,
+    is_public: page.is_public ? 1 : 0,
   });
   if (page.user_id) {
     setPageOwnerStmt.run(page.user_id, page.id);
@@ -329,6 +389,9 @@ module.exports = {
   },
   insertPageAtomic(page) {
     return insertPageAtomicFn(page);
+  },
+  incrementViewCount(pageId) {
+    return incrementViewCountStmt.run(pageId);
   },
   updatePagePasswordAndSalt(pageId, passwordHash, salt) {
     return updatePagePasswordAndSaltStmt.run(passwordHash, salt, pageId);

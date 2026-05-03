@@ -9,6 +9,8 @@ const { clerkClient, clerkMiddleware, getAuth } = require('@clerk/express');
 const Stripe = require('stripe');
 const db = require('./db');
 const storage = require('./storage');
+const cryptoLib = require('./crypto');
+const tiers = require('./tiers');
 const config = require('./config');
 
 const app = express();
@@ -145,6 +147,29 @@ function isUserPro(user) {
   return false;
 }
 
+// Decrypt a page row to its HTML, picking the crypto path by what's stored
+// on the row. Returns null if the on-disk blob is missing.
+//
+//   wrapped_key  → master-key path (Tier 2/3). Password isn't part of crypto;
+//                  caller is responsible for any access gating (bcrypt or
+//                  is_public).
+//   encryption_salt → password-derived path (Tier 1). `password` required.
+//   neither → legacy plaintext upload (pre-encryption).
+function decryptPage(page, password) {
+  if (page.wrapped_key) {
+    const blob = storage.readPageBlob(page.id);
+    if (!blob) return null;
+    const pageKey = cryptoLib.unwrapPageKey(page.wrapped_key);
+    return cryptoLib.decryptWithKey(blob, pageKey);
+  }
+  if (page.encryption_salt) {
+    const blob = storage.readPageBlob(page.id);
+    if (!blob) return null;
+    return cryptoLib.decryptWithPassword(blob, password, page.encryption_salt);
+  }
+  return storage.readPagePlaintext(page.id);
+}
+
 function getRequiredProUser(req, res) {
   const userId = getAuthUserId(req);
   if (!userId) {
@@ -242,7 +267,26 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     const pageId = crypto.randomBytes(6).toString('base64url').slice(0, 8);
     const passwordHash = await bcrypt.hash(password.trim(), 10);
 
-    const encryptionSalt = storage.savePageEncrypted(pageId, file.buffer, password.trim());
+    // Pick the crypto path by tier (see crypto.js header for the why).
+    // Anonymous → password-derived (zero-knowledge). Account/Pro →
+    // master-key wrapped, so account-driven password reset is possible.
+    const tier = tiers.tierFor(user, { isProActive: isUserPro });
+    const html = storage.prepareHtml(file.buffer);
+
+    let encryptionSalt = null;
+    let wrappedKey = null;
+    let blob;
+    if (tier === tiers.TIER.ANONYMOUS) {
+      const out = cryptoLib.encryptWithPassword(html, password.trim());
+      blob = out.blob;
+      encryptionSalt = out.saltBase64;
+    } else {
+      const pageKey = cryptoLib.generatePageKey();
+      blob = cryptoLib.encryptWithKey(html, pageKey);
+      wrappedKey = cryptoLib.wrapPageKey(pageKey);
+    }
+    storage.savePageBlob(pageId, blob);
+
     try {
       db.insertPageAtomic({
         id: pageId,
@@ -252,6 +296,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         created_at: now.toISOString(),
         expires_at: expiresAt.toISOString(),
         encryption_salt: encryptionSalt,
+        wrapped_key: wrappedKey,
+        tier_at_creation: tier,
         user_id: userId || null,
         slug: slug || null,
       });
@@ -290,10 +336,7 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
     const match = await bcrypt.compare(password, page.password_hash);
     if (!match) return res.status(401).json({ error: 'Wrong password' });
 
-    // Decrypt if encrypted, otherwise fall back to legacy plaintext
-    const html = page.encryption_salt
-      ? storage.readPageEncrypted(page.id, password, page.encryption_salt)
-      : storage.readPagePlaintext(page.id);
+    const html = decryptPage(page, password);
     if (!html) return res.status(404).json({ error: 'Page file not found' });
 
     res.json({ html });
@@ -507,16 +550,25 @@ app.patch('/api/pages/:pageId/password', async (req, res) => {
     const match = await bcrypt.compare(oldPassword.trim(), page.password_hash);
     if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
 
-    // Decrypt with old password, re-encrypt with new password
-    if (page.encryption_salt) {
-      const html = storage.readPageEncrypted(page.id, oldPassword.trim(), page.encryption_salt);
-      if (!html) return res.status(500).json({ error: 'Failed to decrypt page — file may have been cleaned up' });
-      const newSalt = storage.savePageEncrypted(page.id, Buffer.from(html, 'utf-8'), password.trim());
-      const newHash = await bcrypt.hash(password.trim(), 10);
-      db.updatePagePasswordAndSalt(page.id, newHash, newSalt);
+    const newHash = await bcrypt.hash(password.trim(), 10);
+
+    if (page.wrapped_key) {
+      // Master-key path: password isn't part of crypto, just rotate the
+      // bcrypt hash. Phase 3 will add a "reset without old password" flow
+      // for Tier 2 — same code path, just skips the old-password check.
+      db.updatePagePassword(page.id, newHash);
+    } else if (page.encryption_salt) {
+      // Password-derived path: must decrypt with the old password and
+      // re-encrypt under the new one.
+      const blob = storage.readPageBlob(page.id);
+      if (!blob) return res.status(500).json({ error: 'Failed to decrypt page — file may have been cleaned up' });
+      const html = cryptoLib.decryptWithPassword(blob, oldPassword.trim(), page.encryption_salt);
+      const out = cryptoLib.encryptWithPassword(html, password.trim());
+      storage.savePageBlob(page.id, out.blob);
+      db.updatePagePasswordAndSalt(page.id, newHash, out.saltBase64);
     } else {
       // Legacy plaintext — just update the hash
-      db.updatePagePassword(page.id, await bcrypt.hash(password.trim(), 10));
+      db.updatePagePassword(page.id, newHash);
     }
 
     res.json({ ok: true });
