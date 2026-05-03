@@ -253,7 +253,7 @@
         ? ends.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
         : null;
       graceBannerText.textContent = `Your Pro subscription has lapsed. Renew, or pick ${limit} link${limit === 1 ? '' : 's'} to keep before ${dateStr || 'the deadline'}.`;
-      graceBannerMeta.textContent = `${selected} of ${limit} selected. ${ends ? `If you ignore this, the most recent ${limit} will be kept automatically.` : ''}`;
+      graceBannerMeta.textContent = `${selected} of ${limit} selected. ${ends ? `If you ignore this, the most recently viewed ${limit} will be kept automatically.` : ''}`;
       graceBanner.classList.remove('hidden');
     }
 

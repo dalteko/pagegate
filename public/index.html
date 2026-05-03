@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PageGate — Share any HTML page in seconds</title>
-  <meta name="description" content="Drop in an HTML file, set a password, get a shareable link. No accounts, no sign-up. Files are encrypted at rest — even we can't read them.">
+  <meta name="description" content="Share an HTML page with a password-protected link. Anonymous uploads are end-to-end encrypted; account pages add recovery and Pro tools.">
   <meta property="og:title" content="PageGate — Password-protect any HTML page">
-  <meta property="og:description" content="Drop in an HTML file, set a password, get a shareable link. Encrypted at rest. No accounts needed.">
+  <meta property="og:description" content="Share an HTML page with anonymous encryption, account recovery, and Pro publishing tools.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://pagegate.app">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="PageGate — Password-protect any HTML page">
-  <meta name="twitter:description" content="Drop in an HTML file, set a password, get a shareable link. Encrypted at rest. No accounts needed.">
+  <meta name="twitter:description" content="Share an HTML page with anonymous encryption, account recovery, and Pro publishing tools.">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="style.css">
   <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.tagged-events.js"></script>
@@ -196,19 +196,20 @@
       <ul class="privacy-list">
         <li>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          <span><strong>Encrypted on our servers</strong> — Your content is encrypted using your password. Even we can't read it.</span>
+          <span><strong>Anonymous uploads are end-to-end encrypted</strong> — The encryption key is derived from your page password, which we never store. We genuinely can't read it. <a href="/privacy.html">Account uploads use a server-held key so password reset works</a> — different trade-off, called out honestly.</span>
         </li>
         <li>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          <span><strong>Password never stored</strong> — We only store a one-way hash. Your actual password is never saved.</span>
+          <span><strong>Password never stored</strong> — Only a one-way bcrypt hash. Your actual password never touches our database.</span>
         </li>
         <li>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          <span><strong>Isolated viewing</strong> — Pages run in a secure sandbox. They can't access your browser data.</span>
+          <span><strong>Isolated viewing</strong> — Pages render in a sandboxed iframe with no same-origin access. They can't read your browser data or PageGate's API.</span>
         </li>
         <li>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          <span><strong>Pages auto-delete</strong> — Anonymous pages expire after 24 hours. No lingering data.</span>
+          <span><strong>Pages auto-delete</strong> — Anonymous in 24 hours, free accounts in 7 days, Pro is configurable. Both the database row and the encrypted file are removed.</span>
+
         </li>
       </ul>
     </details>

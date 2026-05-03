@@ -11,31 +11,38 @@
   <div class="container legal-page">
     <a href="/" class="legal-back">&larr; Back to PageGate</a>
     <h1>Privacy Policy</h1>
-    <p class="legal-updated">Last updated: March 18, 2026</p>
+    <p class="legal-updated">Last updated: April 28, 2026</p>
 
     <h2>What we collect</h2>
     <p>When you upload a file, we store:</p>
     <ul>
-      <li>Your uploaded HTML file, encrypted with a key derived from your password</li>
-      <li>A one-way hash of your password (we never store the actual password)</li>
-      <li>A timestamp of when the page was created</li>
+      <li>Your uploaded HTML file, always encrypted at rest with AES-256-GCM</li>
+      <li>A one-way bcrypt hash of the page password (we never store the actual password)</li>
+      <li>The total number of times the page has been viewed (no per-viewer tracking)</li>
+      <li>Timestamps for creation and expiration</li>
     </ul>
+    <p>If you create a PageGate account (free or Pro), we additionally store the email address from your sign-in provider and your subscription status. Sign-in is handled by Clerk; billing is handled by Stripe. See their privacy policies for what they collect on our behalf.</p>
 
     <h2>What we don't collect</h2>
     <ul>
-      <li>No accounts, no emails, no personal information</li>
-      <li>No cookies (other than what's strictly necessary)</li>
-      <li>No third-party trackers</li>
+      <li>No personal information beyond your sign-in email (and only if you choose to create an account)</li>
+      <li>No cookies beyond what's strictly necessary for sign-in</li>
+      <li>No third-party trackers, no advertising networks</li>
+      <li>No per-viewer analytics on uploaded pages — referrers, geography, and unique-visitor counts are deliberately not tracked</li>
     </ul>
 
     <h2>Analytics</h2>
-    <p>We use <a href="https://plausible.io" target="_blank" rel="noopener">Plausible Analytics</a>, a privacy-focused analytics tool. It collects no personal data, uses no cookies, and is fully GDPR compliant. We see aggregate page views, not individual users.</p>
+    <p>We use <a href="https://plausible.io" target="_blank" rel="noopener">Plausible Analytics</a>, a privacy-focused analytics tool, on the PageGate site itself (not on your uploaded pages). It collects no personal data, uses no cookies, and is fully GDPR compliant. We see aggregate page views, not individual users.</p>
 
-    <h2>Encryption</h2>
-    <p>Uploaded files are encrypted at rest using AES-256-GCM with a key derived from your password. Even we as the operators cannot read your content without your password. If you lose your password, your content is unrecoverable.</p>
+    <h2>Encryption — read this carefully</h2>
+    <p>How your content is encrypted depends on whether you uploaded it anonymously or while signed in:</p>
+    <ul>
+      <li><strong>Anonymous uploads</strong> are end-to-end encrypted: the AES key is derived from the page password using PBKDF2, and the password is never stored. We genuinely cannot read your content. If you lose the password, the content is unrecoverable — by design.</li>
+      <li><strong>Account uploads (free or Pro)</strong> are encrypted at rest with a server-held master key wrapping a per-page key. This is what makes account-driven password reset and Pro edit-in-place possible. The trade-off is honest: under legal compulsion, with the master key, the operator could decrypt content. We don't, and we don't have the rest of the systems (logs, identifiers) needed to do so at scale, but the cryptographic guarantee is weaker than the anonymous tier's.</li>
+    </ul>
 
     <h2>Data retention</h2>
-    <p>Pages naturally expire after 30 days, unless otherwise specified. When a page expires, both the database record and the encrypted file are deleted from our servers.</p>
+    <p>Anonymous pages expire 24 hours after upload (or sooner if the view limit is reached). Account pages expire 7 days after upload. Pro users can configure expiration per page, up to "never". When a page expires, both the database record and the encrypted file are deleted from our servers.</p>
 
   </div>
 </body>
