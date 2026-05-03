@@ -1319,15 +1319,17 @@ a { color: inherit; }
   padding: 60px 20px;
   text-align: center;
 }
-.pg-auth-required p {
+.pg-auth-required > p {
   font-family: var(--rb-serif);
   font-size: clamp(28px, 3vw, 36px);
   letter-spacing: -0.02em;
   margin: 0;
 }
-.pg-auth-required-sub {
+.pg-auth-required > p.pg-auth-required-sub {
   font-family: var(--rb-sans);
   font-size: 14.5px;
+  font-weight: 400;
+  letter-spacing: 0;
   color: var(--rb-ink-soft);
   margin: 0;
   max-width: 36ch;
