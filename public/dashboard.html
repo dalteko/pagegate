@@ -320,6 +320,11 @@
     }
 
     async function openBillingPortal() {
+      const originalText = dashManageBtn?.textContent;
+      if (dashManageBtn) {
+        dashManageBtn.disabled = true;
+        dashManageBtn.textContent = 'Opening...';
+      }
       try {
         const token = await getToken();
         const res = await fetch('/api/billing-portal', {
@@ -330,10 +335,37 @@
           },
         });
         const data = await res.json().catch(() => ({}));
-        if (data.url) window.location.href = data.url;
+        if (data.url) {
+          window.location.href = data.url;
+          return;
+        }
+        throw new Error(data.error || 'Could not open billing');
       } catch (e) {
         console.error('Billing portal failed:', e);
+        showDashboardError('Billing failed', 'Couldn’t open billing. Try again, or email hi@pagegate.app.');
+      } finally {
+        if (dashManageBtn) {
+          dashManageBtn.disabled = false;
+          dashManageBtn.textContent = originalText || 'Manage billing';
+        }
       }
+    }
+
+    function showDashboardError(label, message, { retry = false } = {}) {
+      dashErrorBanner.querySelector('strong').textContent = label;
+      const body = dashErrorBanner.querySelector('span');
+      body.textContent = '';
+      body.appendChild(document.createTextNode(message));
+      if (retry) {
+        body.appendChild(document.createTextNode(' '));
+        const retryBtn = document.createElement('button');
+        retryBtn.className = 'pg-error-banner-retry';
+        retryBtn.type = 'button';
+        retryBtn.textContent = 'Try again';
+        retryBtn.addEventListener('click', () => loadPages());
+        body.appendChild(retryBtn);
+      }
+      dashErrorBanner.classList.remove('hidden');
     }
 
     async function loadPages() {
@@ -375,7 +407,7 @@
       } catch (e) {
         console.error('Failed to load pages:', e);
         dashLoading.classList.add('hidden');
-        dashErrorBanner.classList.remove('hidden');
+        showDashboardError('List failed', 'Couldn’t load your pages.', { retry: true });
       }
     }
 

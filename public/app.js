@@ -119,6 +119,15 @@
   }
 
   async function openBillingPortal() {
+    if (!clerkInstance?.user) {
+      clerkInstance?.openSignIn();
+      return;
+    }
+    const originalText = manageBtn?.textContent;
+    if (manageBtn) {
+      manageBtn.disabled = true;
+      manageBtn.textContent = 'Opening...';
+    }
     try {
       const token = await clerkInstance.session.getToken();
       const res = await fetch('/api/billing-portal', {
@@ -128,10 +137,20 @@
           'Authorization': `Bearer ${token}`,
         },
       });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
+      const data = await res.json().catch(() => ({}));
+      if (data.url) {
+        window.location.href = data.url;
+        return;
+      }
+      throw new Error(data.error || 'Could not open billing');
     } catch (e) {
       console.error('Billing portal failed:', e);
+      alert('Could not open billing. Try again, or email hi@pagegate.app.');
+    } finally {
+      if (manageBtn) {
+        manageBtn.disabled = false;
+        manageBtn.textContent = originalText || 'Manage billing';
+      }
     }
   }
 

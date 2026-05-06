@@ -243,6 +243,14 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     }
   });
 
+  await check('Billing portal route is wired up (no 5xx)', async () => {
+    const r = await fetch(`${base}/api/billing-portal`, { method: 'POST' });
+    if (r.status >= 500) {
+      const body = await r.text();
+      throw new Error(`POST /api/billing-portal returned ${r.status}: ${body.slice(0, 200)}`);
+    }
+  });
+
   await check('Unknown URL returns 404 (does not crash)', async () => {
     // Use a path that doesn't match either the nanoid shape (8 chars, [A-Za-z0-9_-])
     // or the slug shape (lowercase alphanumeric with hyphens). An uppercase
