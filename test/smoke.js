@@ -138,6 +138,7 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
   await check('Upload a page (free tier)', async () => {
     const form = new FormData();
     form.append('file', new Blob(['<!doctype html><h1>smoke</h1>'], { type: 'text/html' }), 'smoke.html');
+    form.append('name', 'Smoke Dashboard Name');
     form.append('password', password);
     const r = await fetch(`${base}/api/upload`, { method: 'POST', body: form });
     if (r.status !== 201) {
@@ -147,6 +148,8 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     const j = await r.json();
     if (!j.pageId) throw new Error('no pageId in response');
     pageId = j.pageId;
+    const row = directDb.prepare('SELECT display_name FROM pages WHERE id = ?').get(pageId);
+    if (row.display_name !== 'Smoke Dashboard Name') throw new Error('display name was not stored');
   });
 
   await check('Upload rejects mismatched confirm-password (400)', async () => {

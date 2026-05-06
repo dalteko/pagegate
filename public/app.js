@@ -211,6 +211,7 @@
   const previewFilename = document.getElementById('previewFilename');
   const removeFileBtn = document.getElementById('removeFile');
   const passwordSection = document.getElementById('passwordSection');
+  const pageNameInput = document.getElementById('pageNameInput');
   const passwordToggle = document.getElementById('passwordToggle');
   const passwordGroup = document.getElementById('passwordGroup');
   const confirmPasswordGroup = document.getElementById('confirmPasswordGroup');
@@ -301,6 +302,9 @@
       const html = e.target.result;
       previewFrame.srcdoc = html;
       if (previewFilename) previewFilename.textContent = file.name;
+      if (pageNameInput && !pageNameInput.value.trim()) {
+        pageNameInput.value = derivePageName(file, html);
+      }
       uploadSection?.classList.add('hidden');
       previewSection.classList.remove('hidden');
       passwordSection.classList.remove('hidden');
@@ -311,6 +315,16 @@
     reader.readAsText(file);
   }
 
+  function derivePageName(file, html) {
+    try {
+      const doc = new DOMParser().parseFromString(String(html), 'text/html');
+      const title = doc.querySelector('title')?.textContent?.replace(/\s+/g, ' ').trim();
+      if (title) return title.slice(0, 80);
+    } catch {}
+    const base = file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return base.toLowerCase() === 'index' ? '' : base.slice(0, 80);
+  }
+
   // === Reset / remove ===
   removeFileBtn?.addEventListener('click', resetAll);
   resetBtn?.addEventListener('click', resetAll);
@@ -319,6 +333,7 @@
     currentFile = null;
     fileInput.value = '';
     passwordInput.value = '';
+    if (pageNameInput) pageNameInput.value = '';
     if (confirmPasswordInput) confirmPasswordInput.value = '';
     if (confirmHint) { confirmHint.textContent = ''; confirmHint.className = 'field-hint'; }
     if (slugInput) slugInput.value = '';
@@ -374,6 +389,8 @@
     try {
       const formData = new FormData();
       formData.append('file', currentFile);
+      const pageName = pageNameInput?.value.trim();
+      if (pageName) formData.append('name', pageName);
       if (wantsPassword) {
         formData.append('password', password);
         if (confirmPassword !== undefined) formData.append('confirmPassword', confirmPassword);

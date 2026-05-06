@@ -278,6 +278,13 @@ const verifyLimiter = rateLimit({
 // Expiration options for Pro users (in days, 0 = never)
 const EXPIRATION_OPTIONS = { '7': 7, '30': 30, '90': 90, '365': 365, 'never': 0 };
 
+function normalizeDisplayName(value) {
+  if (value === undefined || value === null) return null;
+  const cleaned = String(value).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return null;
+  return cleaned.slice(0, 80);
+}
+
 // POST /api/upload — upload HTML file + password
 app.post('/api/upload', uploadHtmlFile, async (req, res) => {
   try {
@@ -286,6 +293,7 @@ app.post('/api/upload', uploadHtmlFile, async (req, res) => {
     const confirmPassword = req.body.confirmPassword;
     const slug = req.body.slug?.trim().toLowerCase();
     const expiration = req.body.expiration;
+    const displayName = normalizeDisplayName(req.body.name);
     // is_public is the inverse of "the user set a password". Password is
     // optional across every tier; toggling it on stores a bcrypt hash and
     // requires unlock at view time, off makes the link directly viewable.
@@ -392,6 +400,7 @@ app.post('/api/upload', uploadHtmlFile, async (req, res) => {
         id: pageId,
         password_hash: passwordHash,
         original_filename: file.originalname,
+        display_name: displayName,
         file_size: file.size,
         created_at: now.toISOString(),
         expires_at: expiresAt.toISOString(),
@@ -643,6 +652,7 @@ app.get('/api/pages', async (req, res) => {
     return {
       id: p.id,
       filename: p.original_filename,
+      displayName: p.display_name || p.original_filename || p.id,
       fileSize: p.file_size,
       slug: p.slug || null,
       createdAt: p.created_at,
@@ -652,14 +662,12 @@ app.get('/api/pages', async (req, res) => {
       isPublic: !!p.is_public,
       tier,
       // Per-action capability flags so the dashboard can render the
-      // right buttons without duplicating tier rules. Public pages
-      // skip both — there's no password to change or reset on a page
-      // that has no password gate.
+      // right buttons without duplicating tier rules.
       hasPassword: !p.is_public,
-      // Whether this page supports server-side password reset. Pages
-      // created on the password-derived path (legacy) cannot be reset
-      // without the old password — the page key is derived from it.
-      passwordResettable: !!p.wrapped_key && !p.is_public,
+      // Whether this page supports dashboard password editing without
+      // knowing the old password. Wrapped-key pages can rotate the hash
+      // because the password is not part of the crypto key.
+      passwordEditable: !!p.wrapped_key,
       canDelete: isPro,
       canEdit: isPro,
       // Phase 5: user's grace-period selection. Only meaningful while
@@ -667,6 +675,36 @@ app.get('/api/pages', async (req, res) => {
       keptAfterGrace: !!p.kept_after_grace,
     };
   }));
+});
+
+// GET /api/pages/:pageId/preview — owner-only dashboard preview.
+// Does not increment view_count and does not bypass public/private state for
+// anyone except the signed-in owner.
+app.get('/api/pages/:pageId/preview', async (req, res) => {
+  try {
+    const auth = await getRequiredAuthUser(req, res);
+    if (!auth) return;
+
+    const page = db.getPageById(req.params.pageId);
+    if (!page) return res.status(404).json({ error: 'Page not found' });
+    if (page.user_id !== auth.userId) return res.status(403).json({ error: 'Not your page' });
+    if (new Date(page.expires_at) < new Date()) {
+      return res.status(410).json({ error: 'Page has expired' });
+    }
+    if (!page.wrapped_key && page.encryption_salt) {
+      return res.status(400).json({
+        error: 'Preview is not available for this legacy password-derived page.',
+        reason: 'not_previewable',
+      });
+    }
+
+    const html = decryptPage(page);
+    if (!html) return res.status(404).json({ error: 'Page file not found' });
+    res.json({ html });
+  } catch (err) {
+    console.error('Page preview error:', err);
+    res.status(500).json({ error: 'Preview failed' });
+  }
 });
 
 // DELETE /api/pages/:pageId — delete a page (Pro only; Tier 2 cannot delete)
@@ -761,6 +799,7 @@ app.post('/api/pages/:pageId/password/reset', async (req, res) => {
 
     const newHash = await bcrypt.hash(password.trim(), 10);
     db.updatePagePassword(page.id, newHash);
+    db.updatePageIsPublic(page.id, false);
     res.json({ ok: true });
   } catch (err) {
     console.error('Password reset error:', err);
@@ -821,6 +860,13 @@ app.patch('/api/pages/:pageId', uploadHtmlFile, async (req, res) => {
 
     const updates = {};
 
+    // --- Display name ---
+    if (req.body.name !== undefined) {
+      const nextName = normalizeDisplayName(req.body.name);
+      db.updatePageDisplayName(page.id, nextName);
+      updates.displayName = nextName;
+    }
+
     // --- HTML replacement ---
     if (req.file) {
       const ext = path.extname(req.file.originalname).toLowerCase();
@@ -874,6 +920,9 @@ app.patch('/api/pages/:pageId', uploadHtmlFile, async (req, res) => {
     // --- Public toggle ---
     if (req.body.isPublic !== undefined) {
       const wantsPublic = req.body.isPublic === 'true' || req.body.isPublic === true;
+      if (!wantsPublic && !page.password_hash) {
+        return res.status(400).json({ error: 'Set a password before making this page private.' });
+      }
       db.updatePageIsPublic(page.id, wantsPublic);
       updates.isPublic = wantsPublic;
     }

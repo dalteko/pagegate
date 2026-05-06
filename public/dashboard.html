@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Your pages — PageGate</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=phase7-2">
+  <link rel="stylesheet" href="style.css?v=phase7-3">
   <script
     data-clerk-publishable-key="__CLERK_PUBLISHABLE_KEY__"
     id="clerk-script"
@@ -122,6 +122,11 @@
       <p class="modal-note">Fields are prefilled with the current values. Clearing the slug reverts the URL to a random nanoid.</p>
       <div class="modal-body">
         <div class="input-group">
+          <label for="editNameInput">Page name <span class="label-hint">optional</span></label>
+          <input type="text" id="editNameInput" maxlength="80" placeholder="Launch page, client preview, moodboard..." autocomplete="off">
+          <p class="field-hint">Shown in your dashboard.</p>
+        </div>
+        <div class="input-group">
           <label for="editFileInput">Replace HTML <span class="label-hint">optional</span></label>
           <input type="file" id="editFileInput" accept=".html,.htm">
           <p class="field-hint" id="editFileHint">Choose a new .html file to replace the page contents.</p>
@@ -160,9 +165,8 @@
     </div>
   </div>
 
-  <!-- Password update modal — works in two modes:
-       (a) reset (no old password needed) for wrapped-key pages, and
-       (b) change (old password required) for legacy password-derived pages. -->
+  <!-- Password update modal. Dashboard-owned wrapped-key pages do not need
+       the old password because the password is not part of the crypto key. -->
   <div class="modal-overlay hidden" id="passwordModal">
     <div class="modal-card">
       <div class="modal-header">
@@ -171,10 +175,6 @@
       </div>
       <p class="modal-note" id="modalNote">Set a new password for this page. Anyone with the link will need the new password to view it.</p>
       <div class="modal-body">
-        <div class="input-group hidden" id="oldPasswordGroup">
-          <label for="oldPasswordInput">Current password</label>
-          <input type="password" id="oldPasswordInput" placeholder="Enter current password" autocomplete="off">
-        </div>
         <div class="input-group">
           <label for="newPasswordInput">New password</label>
           <input type="password" id="newPasswordInput" placeholder="Enter new password" autocomplete="off">
@@ -225,6 +225,7 @@
     // Edit modal state
     const editModal = document.getElementById('editModal');
     const editCloseBtn = document.getElementById('editCloseBtn');
+    const editNameInput = document.getElementById('editNameInput');
     const editFileInput = document.getElementById('editFileInput');
     const editSlugInput = document.getElementById('editSlugInput');
     const editSlugHint = document.getElementById('editSlugHint');
@@ -238,16 +239,13 @@
     // Password modal state
     const passwordModal = document.getElementById('passwordModal');
     const modalCloseBtn = document.getElementById('modalCloseBtn');
-    const oldPasswordInput = document.getElementById('oldPasswordInput');
     const newPasswordInput = document.getElementById('newPasswordInput');
-    const oldPasswordGroup = document.getElementById('oldPasswordGroup');
     const modalTitle = document.getElementById('modalTitle');
     const modalNote = document.getElementById('modalNote');
     const modalError = document.getElementById('modalError');
     const modalCancelBtn = document.getElementById('modalCancelBtn');
     const modalSaveBtn = document.getElementById('modalSaveBtn');
     let editingPageId = null;
-    let editingMode = 'reset'; // 'reset' (wrapped-key) | 'change' (legacy)
 
     async function initClerk() {
       const scriptTag = document.getElementById('clerk-script');
@@ -498,10 +496,18 @@
         else tags.push(`<span class="pg-tag">Locked</span>`);
         if (isExpired) tags.push(`<span class="pg-tag pg-tag--error">Expired</span>`);
 
-        const passwordMode = page.passwordResettable ? 'reset' : 'change';
-        const passwordLabel = page.passwordResettable ? 'Reset password' : 'Change password';
-        const passwordBtn = page.hasPassword
-          ? `<button class="pg-action-btn" data-action="password" data-id="${escapeAttr(page.id)}" data-mode="${passwordMode}">${passwordLabel}</button>`
+        const displayName = page.displayName || page.filename || page.id;
+        const originalName = page.filename || '';
+        const filenameMeta = originalName && originalName !== displayName
+          ? `<span>${escapeHtml(originalName)}</span><span class="pg-page-meta-sep">·</span>`
+          : '';
+        const sizeMeta = sizeKb
+          ? `<span>${escapeHtml(sizeKb)}</span><span class="pg-page-meta-sep">·</span>`
+          : '';
+
+        const passwordLabel = page.hasPassword ? 'Edit password' : 'Set password';
+        const passwordBtn = page.passwordEditable
+          ? `<button class="pg-action-btn" data-action="password" data-id="${escapeAttr(page.id)}" data-label="${escapeAttr(passwordLabel)}">${passwordLabel}</button>`
           : '';
         const editBtn = page.canEdit
           ? `<button class="pg-action-btn" data-action="edit" data-id="${escapeAttr(page.id)}">Edit</button>`
@@ -514,21 +520,25 @@
           id: page.id,
           slug: page.slug,
           isPublic: page.isPublic,
+          displayName,
         });
 
         li.innerHTML = `
           <span class="pg-page-index">${String(idx + 1).padStart(2, '0')}</span>
+          <div class="pg-page-preview" data-preview-id="${escapeAttr(page.id)}">
+            <span>Loading preview</span>
+          </div>
           <div class="pg-page-body">
             <div class="pg-page-title-row">
-              <h3 class="pg-page-title">${escapeHtml(page.filename || page.id)}</h3>
+              <h3 class="pg-page-title">${escapeHtml(displayName)}</h3>
               ${tags.join('')}
             </div>
             <p class="pg-page-url">
               <span class="pg-page-url-host">pagegate.app</span><span class="pg-page-url-slug">${escapeHtml(slug)}</span>
             </p>
             <div class="pg-page-meta">
-              <span>${sizeKb}</span>
-              <span class="pg-page-meta-sep">·</span>
+              ${filenameMeta}
+              ${sizeMeta}
               <span>Uploaded ${createdDate}</span>
               <span class="pg-page-meta-sep">·</span>
               <span>${expiryText}</span>
@@ -553,6 +563,50 @@
         `;
         dashPages.appendChild(li);
       });
+      setupPagePreviews();
+    }
+
+    function setupPagePreviews() {
+      const shells = Array.from(dashPages.querySelectorAll('.pg-page-preview[data-preview-id]'));
+      if (!shells.length) return;
+      const loadPreview = async (shell) => {
+        if (shell.dataset.loaded === 'true') return;
+        shell.dataset.loaded = 'true';
+        try {
+          const token = await getToken();
+          const pageId = encodeURIComponent(shell.dataset.previewId);
+          const res = await fetch(`/api/pages/${pageId}/preview`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          if (!res.ok) throw new Error(`preview ${res.status}`);
+          const data = await res.json();
+          const frame = document.createElement('iframe');
+          frame.className = 'pg-page-preview-frame';
+          frame.setAttribute('sandbox', 'allow-scripts');
+          frame.setAttribute('referrerpolicy', 'no-referrer');
+          frame.setAttribute('tabindex', '-1');
+          frame.srcdoc = data.html || '';
+          shell.textContent = '';
+          shell.appendChild(frame);
+        } catch (err) {
+          console.error('Preview failed:', err);
+          shell.classList.add('pg-page-preview--error');
+          shell.textContent = 'Preview unavailable';
+        }
+      };
+
+      if (!('IntersectionObserver' in window)) {
+        shells.slice(0, 8).forEach(loadPreview);
+        return;
+      }
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          observer.unobserve(entry.target);
+          loadPreview(entry.target);
+        });
+      }, { rootMargin: '320px 0px' });
+      shells.forEach((shell) => observer.observe(shell));
     }
 
     // Keep-toggle handler (separate event because checkboxes fire 'change',
@@ -608,6 +662,7 @@
         editingTargetId = btn.dataset.id;
         const row = btn.closest('.pg-page');
         const meta = row?.dataset.page ? JSON.parse(row.dataset.page) : {};
+        editNameInput.value = meta.displayName || '';
         editFileInput.value = '';
         editSlugInput.value = meta.slug || '';
         editSlugHint.textContent = '';
@@ -618,21 +673,12 @@
         editModal.classList.remove('hidden');
       } else if (action === 'password') {
         editingPageId = btn.dataset.id;
-        editingMode = btn.dataset.mode === 'change' ? 'change' : 'reset';
-        oldPasswordInput.value = '';
         newPasswordInput.value = '';
         modalError.classList.add('hidden');
-        if (editingMode === 'reset') {
-          modalTitle.textContent = 'Reset password';
-          modalNote.textContent = 'Set a new password for this page. Anyone with the link will need the new password to view it.';
-          oldPasswordGroup.classList.add('hidden');
-        } else {
-          modalTitle.textContent = 'Change password';
-          modalNote.textContent = 'Enter your current password and a new one. The page will be re-encrypted with the new password.';
-          oldPasswordGroup.classList.remove('hidden');
-        }
+        modalTitle.textContent = btn.dataset.label || 'Edit password';
+        modalNote.textContent = 'Set a new password for this page. Anyone with the link will need the new password to view it.';
         passwordModal.classList.remove('hidden');
-        (editingMode === 'reset' ? newPasswordInput : oldPasswordInput).focus();
+        newPasswordInput.focus();
       } else if (action === 'delete') {
         if (!confirm('Delete this page? This can’t be undone.')) return;
         try {
@@ -651,13 +697,7 @@
     // Password modal
     [modalCloseBtn, modalCancelBtn].forEach(btn => btn?.addEventListener('click', () => passwordModal.classList.add('hidden')));
     modalSaveBtn.addEventListener('click', async () => {
-      const oldPw = oldPasswordInput.value.trim();
       const pw = newPasswordInput.value.trim();
-      if (editingMode === 'change' && !oldPw) {
-        modalError.textContent = '— Current password is required.';
-        modalError.classList.remove('hidden');
-        return;
-      }
       if (!pw) {
         modalError.textContent = '— New password is required.';
         modalError.classList.remove('hidden');
@@ -666,23 +706,17 @@
       modalSaveBtn.disabled = true;
       try {
         const token = await getToken();
-        const url = editingMode === 'reset'
-          ? `/api/pages/${editingPageId}/password/reset`
-          : `/api/pages/${editingPageId}/password`;
-        const method = editingMode === 'reset' ? 'POST' : 'PATCH';
-        const body = editingMode === 'reset'
-          ? { password: pw }
-          : { oldPassword: oldPw, password: pw };
-        const res = await fetch(url, {
-          method,
+        const res = await fetch(`/api/pages/${editingPageId}/password/reset`, {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ password: pw }),
         });
         if (res.ok) {
           passwordModal.classList.add('hidden');
+          loadPages();
         } else {
           const data = await res.json().catch(() => ({}));
           modalError.textContent = `— ${data.error || 'Failed.'}`;
@@ -696,7 +730,6 @@
       }
     });
     newPasswordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') modalSaveBtn.click(); });
-    oldPasswordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') modalSaveBtn.click(); });
 
     // === Edit modal ===
     [editCloseBtn, editCancelBtn].forEach(btn => btn?.addEventListener('click', () => editModal.classList.add('hidden')));
@@ -723,6 +756,7 @@
       // from the row, so re-submitting the prefilled value is a no-op.
       // Empty string on slug is the sentinel for "clear this field"; the
       // server distinguishes undefined from empty.
+      fd.append('name', editNameInput.value.trim());
       if (editFileInput.files[0]) fd.append('file', editFileInput.files[0]);
       fd.append('slug', editSlugInput.value.trim().toLowerCase());
       if (editExpirationSelect.value) fd.append('expiration', editExpirationSelect.value);
