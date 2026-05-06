@@ -32,6 +32,60 @@ const storage = require('../server/storage');
 const cryptoLib = require('../server/crypto');
 const directDb = new Database(path.join(env.DATA_DIR, 'pagegate.db'));
 
+function insertWrappedPage({
+  id,
+  html,
+  userId = null,
+  isPublic = true,
+  keptAfterGrace = false,
+  slug = null,
+  tier = 3,
+  expiresAt = null,
+  viewCap = null,
+  viewCount = 0,
+}) {
+  const now = new Date();
+  const pageKey = cryptoLib.generatePageKey();
+  const blob = cryptoLib.encryptWithKey(html, pageKey);
+  storage.savePageBlob(id, blob);
+  db.insertPageAtomic({
+    id,
+    password_hash: isPublic ? '' : '$2b$10$4xY3O9IrC2M7LGamEs.CuOaqiP1wXf7T9K3XqNnVkB4RvxPHbZLlK',
+    original_filename: `${id}.html`,
+    file_size: Buffer.byteLength(html),
+    created_at: now.toISOString(),
+    expires_at: expiresAt || new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    encryption_salt: null,
+    wrapped_key: cryptoLib.wrapPageKey(pageKey),
+    tier_at_creation: tier,
+    is_public: isPublic,
+    view_cap: viewCap,
+    user_id: userId,
+    slug,
+    kept_after_grace: keptAfterGrace,
+  });
+  if (viewCount > 0) {
+    directDb.prepare('UPDATE pages SET view_count = ? WHERE id = ?').run(viewCount, id);
+  }
+}
+
+const graceUserId = 'smoke_lapsed_public';
+db.getOrCreateUser(graceUserId, 'smoke-lapsed-public@example.com');
+db.updateUserPro(graceUserId, {
+  isPro: false,
+  stripeCustomerId: 'cus_smoke_lapsed_public',
+  stripeSubscriptionId: null,
+  proExpiresAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+});
+insertWrappedPage({
+  id: 'GracePub',
+  html: '<!doctype html><h1>grace public</h1>',
+  userId: graceUserId,
+  isPublic: true,
+  keptAfterGrace: true,
+  slug: 'grace-public-page',
+});
+
 const child = spawn('node', ['server/index.js'], {
   env,
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -88,26 +142,7 @@ function assertStatus(actual, expected, label) {
 }
 
 function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
-  const now = new Date();
-  const pageKey = cryptoLib.generatePageKey();
-  const blob = cryptoLib.encryptWithKey(html, pageKey);
-  storage.savePageBlob(id, blob);
-  db.insertPageAtomic({
-    id,
-    password_hash: '',
-    original_filename: `${id}.html`,
-    file_size: Buffer.byteLength(html),
-    created_at: now.toISOString(),
-    expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
-    encryption_salt: null,
-    wrapped_key: cryptoLib.wrapPageKey(pageKey),
-    tier_at_creation: 3,
-    is_public: true,
-    view_cap: viewCap,
-  });
-  if (viewCount > 0) {
-    directDb.prepare('UPDATE pages SET view_count = ? WHERE id = ?').run(viewCount, id);
-  }
+  insertWrappedPage({ id, html, viewCap, viewCount, isPublic: true });
 }
 
 (async () => {
@@ -130,6 +165,17 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
   await check('Login is required for /api/me (returns 401)', async () => {
     const r = await fetch(`${base}/api/me`);
     assertStatus(r.status, 401, 'GET /api/me');
+  });
+
+  await check('Grace enforcement keeps selected public pages', async () => {
+    const page = directDb.prepare('SELECT is_public, tier_at_creation, slug, expires_at FROM pages WHERE id = ?').get('GracePub');
+    if (!page) throw new Error('selected public page was deleted during grace enforcement');
+    if (page.is_public !== 1) throw new Error('public state was not preserved');
+    if (page.tier_at_creation !== 2) throw new Error(`expected Tier 2 demotion, got ${page.tier_at_creation}`);
+    if (page.slug !== null) throw new Error('custom slug was not released on demotion');
+    if (new Date(page.expires_at) <= new Date()) throw new Error('demoted page did not receive a fresh expiry');
+    const user = directDb.prepare('SELECT pro_expires_at FROM users WHERE clerk_id = ?').get(graceUserId);
+    if (user.pro_expires_at !== null) throw new Error('grace state was not cleared');
   });
 
   let pageId;

@@ -1025,14 +1025,12 @@ function cleanupExpired() {
 //   1. Pick survivors — user-flagged via /api/pages/:id/keep first,
 //      then fill remaining slots by most-recently-viewed until we reach
 //      the Tier-2 cap.
-//   2. Public-only links don't survive — Tier 2 has no public pages.
-//      User had 30 days to convert them to password-protected.
-//   3. Survivors get their custom slug released, view_cap cleared,
-//      tier_at_creation downgraded to 2, and a fresh 7-day expiry
-//      starting from the cutoff. Pages keep their wrapped-key crypto
-//      and password — that part doesn't change tiers.
-//   4. Non-survivors permanently deleted (DB + disk).
-//   5. User's pro_expires_at cleared so we don't re-process them.
+//   2. Survivors get their custom slug released, tier_at_creation
+//      downgraded to 2, and a fresh 7-day expiry starting from the
+//      cutoff. Pages keep their wrapped-key crypto and password/public
+//      state — that part doesn't change tiers.
+//   3. Non-survivors permanently deleted (DB + disk).
+//   4. User's pro_expires_at cleared so we don't re-process them.
 function enforceLapsedGracePeriods() {
   const lapsed = db.getLapsedProUsers();
   if (lapsed.length === 0) return;
@@ -1047,25 +1045,13 @@ function enforceLapsedGracePeriods() {
     // shortly — no need to handle them here.
     const live = allPages.filter(p => new Date(p.expires_at) > now);
 
-    // Public pages cannot survive into Tier 2 (no public pages allowed).
-    // Per TIERS.md they're deleted unconditionally — pulling them out of
-    // the survivor pool *before* picking ensures the cap of 3 is spent on
-    // pages that can actually be demoted. Otherwise a user with 4 public
-    // + 2 password-protected pages and no explicit picks would lose all
-    // 6 (auto-pick grabs the 3 most-recent, all of which happen to be
-    // public; inner loop deletes them; the password-protected ones below
-    // never get a slot). We honor explicit Keep flags only on survivable
-    // pages — checking Keep on a public page can't override the tier rule.
-    const survivable = live.filter(p => !p.is_public);
-    const publicPages = live.filter(p => p.is_public);
-
-    // Pick survivors from survivable pages: explicit selections first,
+    // Pick survivors from all live pages: explicit selections first,
     // then fill any remaining slots by most-recently-viewed. Pages that
     // have never been viewed fall back to created_at for deterministic
     // ordering.
     const recency = (p) => Date.parse(p.last_viewed_at || p.created_at || 0) || 0;
     const byMostRecentlyViewed = (a, b) => recency(b) - recency(a);
-    const ordered = [...survivable].sort(byMostRecentlyViewed);
+    const ordered = [...live].sort(byMostRecentlyViewed);
     const survivors = [];
     const keepIds = new Set();
 
@@ -1084,23 +1070,15 @@ function enforceLapsedGracePeriods() {
     let deleted = 0;
     let demoted = 0;
 
-    // Public pages: always deleted, never demoted.
-    for (const p of publicPages) {
-      db.deletePageById(p.id);
-      storage.deletePage(p.id);
-      deleted++;
-    }
-
-    for (const p of survivable) {
+    for (const p of live) {
       if (!keepIds.has(p.id)) {
         db.deletePageById(p.id);
         storage.deletePage(p.id);
         deleted++;
         continue;
       }
-      // Demote to Tier 2: release slug, clear view cap, reset clock.
+      // Demote to Tier 2: release slug and reset clock.
       if (p.slug) db.setPageSlug(p.id, null);
-      db.updatePageViewCap(p.id, null);
       db.updatePageExpiration(p.id, newExpiry);
       db.updatePageTier(p.id, tiers.TIER.ACCOUNT);
       db.setPageKeptAfterGrace(p.id, false);

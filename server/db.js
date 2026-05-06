@@ -42,8 +42,9 @@ try {
 //                       runtime crypto path is decided by `wrapped_key`.
 //   view_count        — incremented on each successful unlock.
 //   last_viewed_at    — timestamp of the most recent successful unlock.
-//   view_cap          — per-page cap. null = use the tier default at read time.
-//   is_public         — Pro-only: skip the password gate entirely.
+//   view_cap          — legacy nullable column retained for older DBs.
+//                       View caps are no longer enforced.
+//   is_public         — true when a page skips the password gate.
 //   archived_at       — Phase 5 (Pro downgrade grace) hook; null = active.
 for (const stmt of [
   `ALTER TABLE pages ADD COLUMN wrapped_key TEXT`,

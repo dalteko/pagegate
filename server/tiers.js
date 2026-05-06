@@ -2,7 +2,7 @@
 //
 // Every per-tier limit, validation rule, and feature flag in PageGate flows
 // through this file. If a future engineer needs to know "what does Pro
-// unlock?" or "what's the anonymous view cap?", read this file — never
+// unlock?" or "how many active links does Free allow?", read this file — never
 // hardcode tier rules elsewhere.
 //
 // Spec: docs/TIERS.md. This module is the executable mirror of that doc.
