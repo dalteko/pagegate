@@ -12,6 +12,7 @@ const storage = require('./storage');
 const cryptoLib = require('./crypto');
 const tiers = require('./tiers');
 const config = require('./config');
+const { HOST_FOOTER_HTML } = require('./footer');
 
 const app = express();
 const PORT = process.env.PORT || 3457;
@@ -483,7 +484,13 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
 
     db.incrementViewCount(page.id);
 
-    res.json({ html });
+    // Append the "Hosted by PageGate" shadow-DOM footer for tiers that
+    // include it. Pro pages (footerHidden=true) are returned as-is.
+    const tier = page.tier_at_creation || tiers.TIER.ANONYMOUS;
+    const tierRule = tiers.RULES[tier];
+    const responseHtml = tierRule?.footerHidden ? html : html + HOST_FOOTER_HTML;
+
+    res.json({ html: responseHtml });
   } catch (err) {
     console.error('Verify error:', err);
     res.status(500).json({ error: 'Verification failed' });
