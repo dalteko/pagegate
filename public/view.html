@@ -101,7 +101,6 @@
       const statusCopy = document.getElementById('statusCopy');
       const viewShell = document.getElementById('viewShell');
       const contentFrame = document.getElementById('contentFrame');
-      const hostFooter = document.getElementById('hostFooter');
 
       // Read SSR-injected metadata. Falls back to defaults if the server
       // didn't replace the placeholder (e.g. an old cached view.html).
@@ -112,7 +111,7 @@
         if (parsed && typeof parsed === 'object') pageMeta = parsed;
       } catch { /* placeholder was not replaced — keep defaults */ }
 
-      if (pageMeta.hideFooter && hostFooter) hostFooter.style.display = 'none';
+      if (pageMeta.hideFooter) document.body.classList.add('pgv-no-footer');
 
       function showStatus({ eyebrow, title, copy }) {
         promptCard.classList.add('hidden');

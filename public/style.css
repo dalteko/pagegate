@@ -1162,8 +1162,8 @@ a { color: inherit; }
 
 /* Unlocked content frame.
  * Bottom is offset to leave room for .pgv-host-footer; the footer is
- * hidden via inline style for Pro pages, and a sibling rule below restores
- * the iframe to full height in that case. */
+ * hidden for Pro pages with a body class, and the iframe fills the whole
+ * viewport in that case. */
 .content-frame {
   position: fixed;
   top: 0; left: 0; right: 0;
@@ -1199,11 +1199,8 @@ a { color: inherit; }
   transition: color .15s ease, text-decoration-color .15s ease;
 }
 .pgv-host-footer a:hover { text-decoration-color: var(--rb-ink); }
-/* When Pro pages hide the footer (inline display:none), the iframe should
- * fill the whole viewport again. The :has selector is broadly supported in
- * Phase 7's target browsers; a sibling rule keyed on the hidden footer keeps
- * the iframe full-bleed without a separate body class. */
-body:has(.pgv-host-footer[style*="display: none"]) .content-frame { bottom: 0; }
+.pgv-no-footer .pgv-host-footer { display: none; }
+.pgv-no-footer .content-frame { bottom: 0; }
 
 /* ========================================================================
  * Dashboard

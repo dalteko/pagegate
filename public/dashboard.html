@@ -155,6 +155,7 @@
             <input type="checkbox" id="editIsPublicInput">
             <span>Public page <span class="label-hint">no password</span></span>
           </label>
+          <p class="field-hint" id="editPublicHint"></p>
         </div>
         <p class="modal-error hidden" id="editModalError"></p>
       </div>
@@ -231,10 +232,12 @@
     const editSlugHint = document.getElementById('editSlugHint');
     const editExpirationSelect = document.getElementById('editExpirationSelect');
     const editIsPublicInput = document.getElementById('editIsPublicInput');
+    const editPublicHint = document.getElementById('editPublicHint');
     const editModalError = document.getElementById('editModalError');
     const editCancelBtn = document.getElementById('editCancelBtn');
     const editSaveBtn = document.getElementById('editSaveBtn');
     let editingTargetId = null;
+    let editingPageMeta = null;
 
     // Password modal state
     const passwordModal = document.getElementById('passwordModal');
@@ -521,6 +524,7 @@
           slug: page.slug,
           isPublic: page.isPublic,
           displayName,
+          requiresPasswordToMakePrivate: !!page.requiresPasswordToMakePrivate,
         });
 
         li.innerHTML = `
@@ -662,6 +666,7 @@
         editingTargetId = btn.dataset.id;
         const row = btn.closest('.pg-page');
         const meta = row?.dataset.page ? JSON.parse(row.dataset.page) : {};
+        editingPageMeta = meta;
         editNameInput.value = meta.displayName || '';
         editFileInput.value = '';
         editSlugInput.value = meta.slug || '';
@@ -669,16 +674,11 @@
         editSlugHint.className = 'field-hint';
         editExpirationSelect.value = '';
         editIsPublicInput.checked = !!meta.isPublic;
+        updateEditPublicHint();
         editModalError.classList.add('hidden');
         editModal.classList.remove('hidden');
       } else if (action === 'password') {
-        editingPageId = btn.dataset.id;
-        newPasswordInput.value = '';
-        modalError.classList.add('hidden');
-        modalTitle.textContent = btn.dataset.label || 'Edit password';
-        modalNote.textContent = 'Set a new password for this page. Anyone with the link will need the new password to view it.';
-        passwordModal.classList.remove('hidden');
-        newPasswordInput.focus();
+        openPasswordModal(btn.dataset.id, { title: btn.dataset.label || 'Edit password' });
       } else if (action === 'delete') {
         if (!confirm('Delete this page? This can’t be undone.')) return;
         try {
@@ -734,6 +734,16 @@
     // === Edit modal ===
     [editCloseBtn, editCancelBtn].forEach(btn => btn?.addEventListener('click', () => editModal.classList.add('hidden')));
 
+    function updateEditPublicHint() {
+      if (!editPublicHint) return;
+      if (editingPageMeta?.requiresPasswordToMakePrivate && !editIsPublicInput.checked) {
+        editPublicHint.textContent = 'Set a password next to make this page private.';
+      } else {
+        editPublicHint.textContent = '';
+      }
+    }
+    editIsPublicInput.addEventListener('change', updateEditPublicHint);
+
     const PRO_SLUG_REGEX_DASH = /^[a-z0-9]{2,}(-[a-z0-9]{2,}){2,}$/;
     editSlugInput.addEventListener('input', () => {
       const v = editSlugInput.value.trim().toLowerCase();
@@ -747,39 +757,65 @@
       }
     });
 
-    editSaveBtn.addEventListener('click', async () => {
-      editModalError.classList.add('hidden');
+    function buildEditFormData({ includePublic = true } = {}) {
       const fd = new FormData();
       // File and expiration are only sent when the user picks one (the
       // file input starts empty, the expiration <select> defaults to "Keep
-      // current"). Slug and isPublic are always sent — they're prefilled
-      // from the row, so re-submitting the prefilled value is a no-op.
-      // Empty string on slug is the sentinel for "clear this field"; the
-      // server distinguishes undefined from empty.
+      // current"). Slug is always sent because it is prefilled from the
+      // row, so re-submitting it is a no-op. Empty string on slug is the
+      // sentinel for "clear this field"; the server distinguishes
+      // undefined from empty. isPublic may be omitted when a password must
+      // be set first.
       fd.append('name', editNameInput.value.trim());
       if (editFileInput.files[0]) fd.append('file', editFileInput.files[0]);
       fd.append('slug', editSlugInput.value.trim().toLowerCase());
       if (editExpirationSelect.value) fd.append('expiration', editExpirationSelect.value);
-      fd.append('isPublic', editIsPublicInput.checked ? 'true' : 'false');
+      if (includePublic) fd.append('isPublic', editIsPublicInput.checked ? 'true' : 'false');
+      return fd;
+    }
+
+    function openPasswordModal(pageId, { title = 'Edit password', note = null } = {}) {
+      editingPageId = pageId;
+      newPasswordInput.value = '';
+      modalError.classList.add('hidden');
+      modalTitle.textContent = title;
+      modalNote.textContent = note || 'Set a new password for this page. Anyone with the link will need the new password to view it.';
+      passwordModal.classList.remove('hidden');
+      newPasswordInput.focus();
+    }
+
+    async function saveEditForm(fd) {
+      const token = await getToken();
+      const res = await fetch(`/api/pages/${editingTargetId}`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: fd,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Save failed.');
+      }
+    }
+
+    editSaveBtn.addEventListener('click', async () => {
+      editModalError.classList.add('hidden');
+      const needsPasswordToMakePrivate = editingPageMeta?.requiresPasswordToMakePrivate && !editIsPublicInput.checked;
+      const fd = buildEditFormData({ includePublic: !needsPasswordToMakePrivate });
 
       editSaveBtn.disabled = true;
       try {
-        const token = await getToken();
-        const res = await fetch(`/api/pages/${editingTargetId}`, {
-          method: 'PATCH',
-          headers: { 'Authorization': `Bearer ${token}` },
-          body: fd,
-        });
-        if (res.ok) {
-          editModal.classList.add('hidden');
-          loadPages();
+        await saveEditForm(fd);
+        editModal.classList.add('hidden');
+        if (needsPasswordToMakePrivate) {
+          openPasswordModal(editingTargetId, {
+            title: 'Set password',
+            note: 'Set a password to make this page private. Anyone with the link will need it to view the page.',
+          });
         } else {
-          const data = await res.json().catch(() => ({}));
-          editModalError.textContent = `— ${data.error || 'Save failed.'}`;
-          editModalError.classList.remove('hidden');
+          loadPages();
         }
-      } catch {
-        editModalError.textContent = '— Connection error.';
+      } catch (err) {
+        editModalError.textContent = `— ${err.message || 'Connection error.'}`;
         editModalError.classList.remove('hidden');
       } finally {
         editSaveBtn.disabled = false;

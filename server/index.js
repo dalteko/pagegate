@@ -664,6 +664,10 @@ app.get('/api/pages', async (req, res) => {
       // Per-action capability flags so the dashboard can render the
       // right buttons without duplicating tier rules.
       hasPassword: !p.is_public,
+      // Public pages created without a password need one before they can
+      // become private. Public pages that used to be locked can flip back
+      // without prompting because a bcrypt hash is already stored.
+      requiresPasswordToMakePrivate: !!p.is_public && !p.password_hash && !!p.wrapped_key,
       // Whether this page supports dashboard password editing without
       // knowing the old password. Wrapped-key pages can rotate the hash
       // because the password is not part of the crypto key.
