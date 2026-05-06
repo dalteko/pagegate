@@ -122,7 +122,12 @@
         if (copy)    statusCopy.textContent = copy;
       }
 
-      function renderHtml(html) {
+      function renderHtml(html, opts) {
+        // PR #18 appends a richer Hosted-by footer inside the iframe for
+        // non-Pro pages and signals that with hostFooterInjected. When
+        // present, hide our outer thin strip so we don't render two
+        // stacked footers.
+        if (opts?.hostFooterInjected) document.body.classList.add('pgv-no-footer');
         viewShell.classList.add('hidden');
         contentFrame.classList.remove('hidden');
         contentFrame.srcdoc = html;
@@ -141,7 +146,8 @@
               body: JSON.stringify({}),
             });
             if (res.ok) {
-              renderHtml((await res.json()).html);
+              const data = await res.json();
+              renderHtml(data.html, { hostFooterInjected: data.hostFooterInjected });
             } else if (res.status === 404) {
               showStatus({
                 eyebrow: '— Removed',
@@ -187,7 +193,8 @@
           });
 
           if (res.ok) {
-            renderHtml((await res.json()).html);
+            const data = await res.json();
+            renderHtml(data.html, { hostFooterInjected: data.hostFooterInjected });
           } else if (res.status === 401) {
             errorMsg.textContent = '— Wrong password.';
             errorMsg.classList.remove('hidden');
