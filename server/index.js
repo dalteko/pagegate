@@ -579,6 +579,26 @@ app.post('/api/checkout', async (req, res) => {
   }
 });
 
+async function findStripeCustomerIdForUser(user) {
+  if (user?.stripe_customer_id) return user.stripe_customer_id;
+  if (!stripe || !user?.email) return null;
+
+  const customers = await stripe.customers.list({
+    email: user.email,
+    limit: 1,
+  });
+  const customer = customers.data?.[0];
+  if (!customer?.id) return null;
+
+  db.updateUserPro(user.clerk_id, {
+    isPro: !!user.is_pro,
+    stripeCustomerId: customer.id,
+    stripeSubscriptionId: user.stripe_subscription_id,
+    proExpiresAt: user.pro_expires_at,
+  });
+  return customer.id;
+}
+
 // POST /api/billing-portal — Stripe Customer Portal for managing subscription
 app.post('/api/billing-portal', async (req, res) => {
   try {
@@ -587,13 +607,14 @@ app.post('/api/billing-portal', async (req, res) => {
     if (!stripe) return res.status(500).json({ error: 'Billing not configured' });
 
     const user = db.getUser(userId);
-    if (!user || !user.stripe_customer_id) {
+    const stripeCustomerId = await findStripeCustomerIdForUser(user);
+    if (!user || !stripeCustomerId) {
       return res.status(400).json({ error: 'No billing account found' });
     }
 
     const baseUrl = BASE_URL || `${req.protocol}://${req.get('host')}`;
     const session = await stripe.billingPortal.sessions.create({
-      customer: user.stripe_customer_id,
+      customer: stripeCustomerId,
       return_url: baseUrl,
     });
 
