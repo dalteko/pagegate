@@ -914,25 +914,6 @@ a { color: inherit; }
   border-bottom: 1px solid var(--rb-rule);
   gap: 16px;
 }
-.pgv-mark {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  text-decoration: none;
-  color: var(--rb-ink);
-}
-.pgv-mark-glyph {
-  font-family: var(--rb-serif);
-  font-size: 28px;
-  line-height: 1;
-  font-style: italic;
-  letter-spacing: -0.02em;
-}
-.pgv-mark-word {
-  font-family: var(--rb-sans);
-  font-size: 14px;
-  font-weight: 600;
-}
 .pgv-header-link {
   font-family: var(--rb-mono);
   font-size: 11px;
