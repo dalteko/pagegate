@@ -55,19 +55,19 @@ Today PageGate treats every user the same: 30-day expiry, password-required, no 
 The full tier breakdown is in [TIERS.md](./TIERS.md). Headline requirements:
 
 ### Tier 1 — Free, anonymous
-- 1-day expiry, 300-view cap, 10 MB file limit.
-- Confirm-password on upload (typo = dead page otherwise).
+- 1-day expiry, 10 MB file limit.
+- Optional password; confirm-password on upload when a password is set.
 - Link shown once, never recoverable.
-- Stored anonymous pages are password-derived: without the page password, PageGate cannot recover or decrypt them at rest.
+- Password-protected anonymous pages are password-derived: without the page password, PageGate cannot recover or decrypt them at rest. No-password anonymous pages use the server-wrapped key path.
 
 ### Tier 2 — Free, account
-- 7-day fixed expiry, 3 links max (no delete), 1,000-view cap.
+- 7-day fixed expiry, 3 links max (no delete).
 - Dashboard with link URL + expiry + view count. Password not displayed.
 - Account-driven password reset (no need to know old password).
-- Random slug, no public pages, no edit-in-place, no analytics.
+- Optional password/public pages, random slug, no edit-in-place, no analytics beyond the dashboard view count.
 
 ### Tier 3 — Pro ($5/mo)
-- Custom expiry up to "forever", 100 links, custom view caps.
+- Custom expiry up to "forever", 100 links.
 - Custom hyphenated slugs (3+ word groups, 2+ chars each, ≤60 chars total) with reserved-namespace denylist.
 - Public pages (no password).
 - Edit-in-place: HTML, password, expiry, slug.
@@ -76,7 +76,6 @@ The full tier breakdown is in [TIERS.md](./TIERS.md). Headline requirements:
 
 ### Cross-tier
 - Pro downgrade: 30-day grace period (everything keeps working) → user picks 3 to keep → enforce Tier 2 at day 30. Auto-pick most-recently-viewed if user ignores banner.
-- View-limit-reached UX matches expiry UX (different copy).
 - Slug collisions: first-come-first-served.
 
 ---
@@ -98,11 +97,11 @@ Sequential, not parallel. Each phase is shippable on its own.
 | Phase | Scope | User-visible change |
 |---|---|---|
 | **1. Foundation** | Schema migration, server-master-key crypto path for accounts, Tier 1 password-derived path preserved. Refactor existing pages to new schema. | None (silent migration). |
-| **2. Tier 1 polish** | 1-day expiry, 300-view cap, confirm-password input, link-shown-once flow. | Anonymous expiry shortens; new confirm-password step. |
-| **3. Tier 2** | Dashboard, password reset UI, 3-link cap, 7-day expiry, 1,000-view cap, branding footer logic. | Logged-in users see dashboard + can reset passwords. |
-| **4. Tier 3** | Custom slugs (+ reserved namespace), public pages, custom view caps, edit-in-place, per-page analytics. | Pro subscribers unlock the full feature set. |
+| **2. Tier 1 polish** | 1-day expiry, optional password with confirm-password input, link-shown-once flow. | Anonymous expiry shortens; password can be skipped or confirmed when set. |
+| **3. Tier 2** | Dashboard, password reset UI, 3-link cap, 7-day expiry, branding footer logic. | Logged-in users see dashboard + can reset passwords. |
+| **4. Tier 3** | Custom slugs (+ reserved namespace), public pages, edit-in-place, per-page analytics. | Pro subscribers unlock the full feature set. |
 | **5. Pro downgrade** | Stripe webhook handler for cancel/lapse, 30-day grace, banner UI, link-selection flow, day-30 enforcement job. | Lapsed Pro users get the grace experience instead of an immediate cliff. |
-| **6. Copy + polish** | README rewrite, marketing/landing copy update, view-cap UI polish, edge-case cleanup. | Honest privacy claims; cleaner UX. |
+| **6. Copy + polish** | README rewrite, marketing/landing copy update, edge-case cleanup. | Honest privacy claims; cleaner UX. |
 
 Estimated total: 2–3 weeks of focused work. Each phase is roughly 1–4 days.
 

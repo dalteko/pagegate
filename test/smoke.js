@@ -32,6 +32,60 @@ const storage = require('../server/storage');
 const cryptoLib = require('../server/crypto');
 const directDb = new Database(path.join(env.DATA_DIR, 'pagegate.db'));
 
+function insertWrappedPage({
+  id,
+  html,
+  userId = null,
+  isPublic = true,
+  keptAfterGrace = false,
+  slug = null,
+  tier = 3,
+  expiresAt = null,
+  viewCap = null,
+  viewCount = 0,
+}) {
+  const now = new Date();
+  const pageKey = cryptoLib.generatePageKey();
+  const blob = cryptoLib.encryptWithKey(html, pageKey);
+  storage.savePageBlob(id, blob);
+  db.insertPageAtomic({
+    id,
+    password_hash: isPublic ? '' : '$2b$10$4xY3O9IrC2M7LGamEs.CuOaqiP1wXf7T9K3XqNnVkB4RvxPHbZLlK',
+    original_filename: `${id}.html`,
+    file_size: Buffer.byteLength(html),
+    created_at: now.toISOString(),
+    expires_at: expiresAt || new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    encryption_salt: null,
+    wrapped_key: cryptoLib.wrapPageKey(pageKey),
+    tier_at_creation: tier,
+    is_public: isPublic,
+    view_cap: viewCap,
+    user_id: userId,
+    slug,
+    kept_after_grace: keptAfterGrace,
+  });
+  if (viewCount > 0) {
+    directDb.prepare('UPDATE pages SET view_count = ? WHERE id = ?').run(viewCount, id);
+  }
+}
+
+const graceUserId = 'smoke_lapsed_public';
+db.getOrCreateUser(graceUserId, 'smoke-lapsed-public@example.com');
+db.updateUserPro(graceUserId, {
+  isPro: false,
+  stripeCustomerId: 'cus_smoke_lapsed_public',
+  stripeSubscriptionId: null,
+  proExpiresAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+});
+insertWrappedPage({
+  id: 'GracePub',
+  html: '<!doctype html><h1>grace public</h1>',
+  userId: graceUserId,
+  isPublic: true,
+  keptAfterGrace: true,
+  slug: 'grace-public-page',
+});
+
 const child = spawn('node', ['server/index.js'], {
   env,
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -88,26 +142,7 @@ function assertStatus(actual, expected, label) {
 }
 
 function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
-  const now = new Date();
-  const pageKey = cryptoLib.generatePageKey();
-  const blob = cryptoLib.encryptWithKey(html, pageKey);
-  storage.savePageBlob(id, blob);
-  db.insertPageAtomic({
-    id,
-    password_hash: '',
-    original_filename: `${id}.html`,
-    file_size: Buffer.byteLength(html),
-    created_at: now.toISOString(),
-    expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
-    encryption_salt: null,
-    wrapped_key: cryptoLib.wrapPageKey(pageKey),
-    tier_at_creation: 3,
-    is_public: true,
-    view_cap: viewCap,
-  });
-  if (viewCount > 0) {
-    directDb.prepare('UPDATE pages SET view_count = ? WHERE id = ?').run(viewCount, id);
-  }
+  insertWrappedPage({ id, html, viewCap, viewCount, isPublic: true });
 }
 
 (async () => {
@@ -132,12 +167,24 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     assertStatus(r.status, 401, 'GET /api/me');
   });
 
+  await check('Grace enforcement keeps selected public pages', async () => {
+    const page = directDb.prepare('SELECT is_public, tier_at_creation, slug, expires_at FROM pages WHERE id = ?').get('GracePub');
+    if (!page) throw new Error('selected public page was deleted during grace enforcement');
+    if (page.is_public !== 1) throw new Error('public state was not preserved');
+    if (page.tier_at_creation !== 2) throw new Error(`expected Tier 2 demotion, got ${page.tier_at_creation}`);
+    if (page.slug !== null) throw new Error('custom slug was not released on demotion');
+    if (new Date(page.expires_at) <= new Date()) throw new Error('demoted page did not receive a fresh expiry');
+    const user = directDb.prepare('SELECT pro_expires_at FROM users WHERE clerk_id = ?').get(graceUserId);
+    if (user.pro_expires_at !== null) throw new Error('grace state was not cleared');
+  });
+
   let pageId;
   const password = 'smoke-test-password';
 
   await check('Upload a page (free tier)', async () => {
     const form = new FormData();
     form.append('file', new Blob(['<!doctype html><h1>smoke</h1>'], { type: 'text/html' }), 'smoke.html');
+    form.append('name', 'Smoke Dashboard Name');
     form.append('password', password);
     const r = await fetch(`${base}/api/upload`, { method: 'POST', body: form });
     if (r.status !== 201) {
@@ -147,6 +194,8 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     const j = await r.json();
     if (!j.pageId) throw new Error('no pageId in response');
     pageId = j.pageId;
+    const row = directDb.prepare('SELECT display_name FROM pages WHERE id = ?').get(pageId);
+    if (row.display_name !== 'Smoke Dashboard Name') throw new Error('display name was not stored');
   });
 
   await check('Upload rejects mismatched confirm-password (400)', async () => {
@@ -219,26 +268,20 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     }
   });
 
-  await check('Pro pages with no explicit cap fall back to the 1,000-view default', async () => {
+  await check('Pages with no cap unlock indefinitely (view caps removed)', async () => {
     const publicId = 'PubCap01';
     insertPublicWrappedPage({
       id: publicId,
       html: '<!doctype html><h1>public cap</h1>',
       viewCap: null,
-      viewCount: 999,
+      viewCount: 9999,
     });
-    const ok = await fetch(`${base}/api/verify/${publicId}`, {
+    const r = await fetch(`${base}/api/verify/${publicId}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}),
     });
-    assertStatus(ok.status, 200, 'public verify at 999 views');
-    const capped = await fetch(`${base}/api/verify/${publicId}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    assertStatus(capped.status, 410, 'public verify at default cap');
+    assertStatus(r.status, 200, 'public verify well past former 1k default');
   });
 
   await check('Stripe checkout route is wired up (no 5xx)', async () => {
@@ -246,6 +289,14 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     if (r.status >= 500) {
       const body = await r.text();
       throw new Error(`POST /api/checkout returned ${r.status}: ${body.slice(0, 200)}`);
+    }
+  });
+
+  await check('Billing portal route is wired up (no 5xx)', async () => {
+    const r = await fetch(`${base}/api/billing-portal`, { method: 'POST' });
+    if (r.status >= 500) {
+      const body = await r.text();
+      throw new Error(`POST /api/billing-portal returned ${r.status}: ${body.slice(0, 200)}`);
     }
   });
 

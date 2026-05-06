@@ -1,14 +1,14 @@
 # PageGate
 
-Password-protected HTML page sharing in three tiers — anonymous, free account, and Pro. See [`docs/TIERS.md`](docs/TIERS.md) for the full per-tier rules and [`docs/PRD.md`](docs/PRD.md) for the why.
+HTML page sharing with optional passwords in three tiers — anonymous, free account, and Pro. See [`docs/TIERS.md`](docs/TIERS.md) for the full per-tier rules and [`docs/PRD.md`](docs/PRD.md) for the why.
 
 **Live at [pagegate.app](https://pagegate.app)**
 
 ## How it works
 
-1. Drop in an `.html` file (or paste HTML), set a password
+1. Drop in an `.html` file (or paste HTML), optionally set a password
 2. Get a shareable link (e.g. `pagegate.app/Ab3xK9mz`)
-3. Anyone with the link enters the password to view the page
+3. Anyone with the link opens it directly, or enters the password if you set one
 4. Pages auto-expire — 24 hours for anonymous, 7 days for free accounts, configurable for Pro
 
 | | Anonymous | Free account | Pro ($5/mo) |
@@ -16,9 +16,8 @@ Password-protected HTML page sharing in three tiers — anonymous, free account,
 | Account required | No | Yes | Yes |
 | Expiry | 24 hours | 7 days | Custom (up to forever) |
 | Active links | Unlimited (ephemeral) | 3 | 100 |
-| View cap | 300 (fixed) | 1,000 (fixed) | Custom per link |
 | Custom slugs (`/my-landing-page`) | — | — | ✓ |
-| Public pages (no password) | — | — | ✓ |
+| Public pages (no password) | ✓ | ✓ | ✓ |
 | Edit-in-place (HTML / password / expiry / slug) | — | — | ✓ |
 | Server-side password reset | — | ✓ | ✓ |
 | Dashboard with view counts | — | ✓ | ✓ |
@@ -27,7 +26,8 @@ Password-protected HTML page sharing in three tiers — anonymous, free account,
 
 PageGate runs **two distinct encryption paths** by tier. The trade-off is intentional and called out in the privacy policy.
 
-- **Anonymous uploads use password-derived encryption at rest.** The AES-256-GCM key is derived from the page password via PBKDF2 (100k iterations). The password is bcrypt-hashed for verification, but never stored in any reversible form. Without that password, the stored page cannot be recovered. Forgotten password = unrecoverable, by design.
+- **Password-protected anonymous uploads use password-derived encryption at rest.** The AES-256-GCM key is derived from the page password via PBKDF2 (100k iterations). The password is bcrypt-hashed for verification, but never stored in any reversible form. Without that password, the stored page cannot be recovered. Forgotten password = unrecoverable, by design.
+- **No-password anonymous uploads use the server-wrapped key path.** They have no password to derive a key from, so they are encrypted at rest but are not zero-knowledge.
 - **Account uploads (free or Pro) are encrypted at rest with a server-held master key.** A random per-page key is generated, wrapped with the `PAGE_KEY_MASTER` env var, and stored in the database. This is what makes account-driven password reset and Pro edit-in-place possible. The honest trade-off: account content is not zero-knowledge; the operator could decrypt it with the master key.
 
 Other security properties — uniform across tiers:
@@ -36,7 +36,6 @@ Other security properties — uniform across tiers:
 - **Password hashing** — All page passwords are bcrypt-hashed (10 salt rounds) for verification. Anonymous pages additionally derive their encryption key from the password.
 - **Rate limiting** — 10 password attempts per IP per page per hour.
 - **Auto-expiration** — Expired pages are removed from the active database and disk by scheduled cleanup, so removal after expiry may not be instant.
-- **Per-page view cap** — Pages lock once they hit their view limit (300 anonymous, 1,000 free, configurable for Pro). Same UX as expiry, distinct copy.
 
 ## Tech stack
 
@@ -79,34 +78,33 @@ Other security properties — uniform across tiers:
 
 ### `POST /api/upload`
 
-Upload an HTML file with a password.
+Upload an HTML file, with or without a password.
 
 - **Body** (`multipart/form-data`):
   - `file` — `.html`, max 10 MB
-  - `password` — required unless `isPublic=true` (Pro only)
+  - `name` — optional dashboard display name
+  - `password` — optional; when omitted, the page is public to anyone with the link
   - `confirmPassword` — optional but recommended; server validates it matches if supplied
   - `slug` — optional, Pro only. Strict regex per `tiers.PRO_SLUG_REGEX`
   - `expiration` — optional, Pro only: `7`, `30`, `90`, `365`, or `never`
-  - `isPublic` — optional, Pro only: `true` to skip the password gate
-  - `viewCap` — optional, Pro only: positive integer (defaults to 1,000 for Pro)
 - **Response:** `{ pageId, url, expiresAt, slug }`
 
 
 ### `POST /api/verify/:pageId`
 
-Verify a password and retrieve the decrypted HTML. For public Pro pages, password is not required.
+Verify a password and retrieve the decrypted HTML. For public pages, password is not required.
 
 - **Body:** `{ "password": "..." }` (omit for public pages)
 - **Response:** `{ html }` on success
-- **Errors:** `401` wrong password, `404` not found/expired, `410` view limit reached, `429` rate limited
+- **Errors:** `401` wrong password, `404` not found/expired, `429` rate limited
 
 ### `GET /api/pages` (signed-in)
 
-List the calling user's pages. Response includes `viewCount`, `viewCap`, `isPublic`, per-action capability flags (`canDelete`, `canEdit`, `passwordResettable`), and the grace-period `keptAfterGrace` flag.
+List the calling user's pages. Response includes `displayName`, `viewCount`, `isPublic`, per-action capability flags (`canDelete`, `canEdit`, `hasPassword`, `passwordEditable`), and the grace-period `keptAfterGrace` flag.
 
 ### `PATCH /api/pages/:pageId` (Pro)
 
-Edit-in-place: replace HTML, change slug / expiration / `isPublic` / `viewCap`. Multipart, all fields optional.
+Edit-in-place: rename the dashboard entry, replace HTML, change slug / expiration / `isPublic`. Multipart, all fields optional.
 
 ### `PATCH /api/pages/:pageId/password` (signed-in)
 
@@ -162,7 +160,7 @@ When `PRO_ENABLED` is not `true`, PageGate runs in anonymous-only mode: uploads 
 |---|---|---|
 | `Upload` | `filename`, `size` | A page was uploaded |
 | `Unlock` | `page` | A page was successfully unlocked |
-| `Unlock Failed` | `page`, `reason` | `wrong_password`, `expired`, `view_cap`, `rate_limited` |
+| `Unlock Failed` | `page`, `reason` | `wrong_password`, `expired`, `rate_limited` |
 
 ## License
 

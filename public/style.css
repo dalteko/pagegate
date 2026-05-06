@@ -546,6 +546,55 @@ a { color: inherit; }
 }
 .checkbox-label .label-hint { color: var(--rb-ink-soft); }
 
+/* Pill toggle — used for the "Password-protect this page" switch on the
+ * landing upload form. Native checkbox is hidden but kept for accessibility
+ * and form semantics; the visible track/thumb mirror its checked state. */
+.toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  font-family: var(--rb-sans);
+  font-size: 14px;
+  color: var(--rb-ink);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+.toggle-label input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+.toggle-track {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--rb-ink-fade);
+  transition: background-color .18s ease;
+  flex-shrink: 0;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(21, 21, 26, 0.18);
+  transition: transform .18s ease;
+}
+.toggle-label input[type="checkbox"]:checked ~ .toggle-track { background: var(--rb-accent); }
+.toggle-label input[type="checkbox"]:checked ~ .toggle-track .toggle-thumb { transform: translateX(16px); }
+.toggle-label input[type="checkbox"]:focus-visible ~ .toggle-track {
+  box-shadow: 0 0 0 3px var(--rb-accent-soft);
+}
+.toggle-text { user-select: none; }
+
 /* Pro fields surround */
 .pro-fields {
   margin-top: 22px;
@@ -1111,16 +1160,47 @@ a { color: inherit; }
 }
 .pgv-footer a:hover { color: var(--rb-ink); text-decoration-color: var(--rb-ink); }
 
-/* Unlocked content frame */
+/* Unlocked content frame.
+ * Bottom is offset to leave room for .pgv-host-footer; the footer is
+ * hidden for Pro pages with a body class, and the iframe fills the whole
+ * viewport in that case. */
 .content-frame {
   position: fixed;
-  top: 0; left: 0;
+  top: 0; left: 0; right: 0;
+  bottom: 28px;
   width: 100%;
-  height: 100%;
   border: none;
   background: #fff;
   z-index: 1;
 }
+
+/* Thin "Hosted by pagegate.app" strip pinned to the viewport bottom. */
+.pgv-host-footer {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--rb-paper);
+  border-top: 1px solid var(--rb-rule);
+  font-family: var(--rb-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--rb-ink-soft);
+  z-index: 2;
+}
+.pgv-host-footer a {
+  color: var(--rb-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--rb-ink-fade);
+  text-underline-offset: 3px;
+  transition: color .15s ease, text-decoration-color .15s ease;
+}
+.pgv-host-footer a:hover { text-decoration-color: var(--rb-ink); }
+.pgv-no-footer .pgv-host-footer { display: none; }
+.pgv-no-footer .content-frame { bottom: 0; }
 
 /* ========================================================================
  * Dashboard
@@ -1343,8 +1423,8 @@ a { color: inherit; }
 }
 .pg-page {
   display: grid;
-  grid-template-columns: 28px minmax(280px, 1fr) 140px auto;
-  gap: 24px;
+  grid-template-columns: 28px minmax(144px, 180px) minmax(220px, 1fr) 108px minmax(180px, auto);
+  gap: 20px;
   padding: 28px 0;
   border-bottom: 1px solid var(--rb-rule);
   align-items: center;
@@ -1359,6 +1439,38 @@ a { color: inherit; }
   letter-spacing: 0.04em;
   align-self: start;
   padding-top: 4px;
+}
+.pg-page-preview {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--rb-rule);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+  color: var(--rb-ink-fade);
+  display: grid;
+  place-items: center;
+  font-family: var(--rb-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  align-self: start;
+}
+.pg-page-preview-frame {
+  width: 400%;
+  height: 400%;
+  border: 0;
+  display: block;
+  background: #fff;
+  pointer-events: none;
+  transform: scale(0.25);
+  transform-origin: 0 0;
+}
+.pg-page-preview--error {
+  background: var(--rb-paper-2);
+  color: var(--rb-ink-soft);
+  text-align: center;
+  padding: 12px;
 }
 .pg-page-body { min-width: 0; }
 .pg-page-title-row {
@@ -1896,6 +2008,21 @@ a { color: inherit; }
 }
 .legal-body a:hover { text-decoration-color: var(--rb-accent); }
 
+@media (max-width: 980px) {
+  .pg-page {
+    grid-template-columns: 28px minmax(132px, 160px) minmax(0, 1fr);
+    align-items: start;
+  }
+  .pg-page-views {
+    grid-column: 2;
+    text-align: left;
+  }
+  .pg-page-actions {
+    grid-column: 3;
+    justify-content: flex-start;
+  }
+}
+
 /* ========================================================================
  * Mobile tweaks
  * ====================================================================== */
@@ -1916,7 +2043,10 @@ a { color: inherit; }
     padding: 22px 0;
   }
   .pg-page-index { display: none; }
+  .pg-page-preview { max-width: none; }
   .pg-page-views { text-align: left; }
+  .pg-page-actions,
+  .pg-page-views { grid-column: auto; }
   .pg-page-actions { justify-content: flex-start; }
   .pgv-header { padding: 16px; }
   .pgv-main { padding: 40px 16px; }

@@ -13,6 +13,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     password_hash TEXT NOT NULL,
     original_filename TEXT,
+    display_name TEXT,
     file_size INTEGER,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -41,8 +42,9 @@ try {
 //                       runtime crypto path is decided by `wrapped_key`.
 //   view_count        — incremented on each successful unlock.
 //   last_viewed_at    — timestamp of the most recent successful unlock.
-//   view_cap          — per-page cap. null = use the tier default at read time.
-//   is_public         — Pro-only: skip the password gate entirely.
+//   view_cap          — legacy nullable column retained for older DBs.
+//                       View caps are no longer enforced.
+//   is_public         — true when a page skips the password gate.
 //   archived_at       — Phase 5 (Pro downgrade grace) hook; null = active.
 for (const stmt of [
   `ALTER TABLE pages ADD COLUMN wrapped_key TEXT`,
@@ -52,6 +54,7 @@ for (const stmt of [
   `ALTER TABLE pages ADD COLUMN view_cap INTEGER`,
   `ALTER TABLE pages ADD COLUMN is_public INTEGER DEFAULT 0`,
   `ALTER TABLE pages ADD COLUMN archived_at TEXT`,
+  `ALTER TABLE pages ADD COLUMN display_name TEXT`,
   // Phase 5 (Pro downgrade grace): user's selection of which links to
   // keep when grace ends. 1 = keep, 0 = drop. Auto-fallback to most-
   // recent if none are selected by day 30.
@@ -154,13 +157,13 @@ db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug) WHERE s
 
 const insertStmt = db.prepare(`
   INSERT INTO pages (
-    id, password_hash, original_filename, file_size,
+    id, password_hash, original_filename, display_name, file_size,
     created_at, expires_at, encryption_salt,
     wrapped_key, tier_at_creation, view_cap, is_public,
     last_viewed_at, kept_after_grace
   )
   VALUES (
-    @id, @password_hash, @original_filename, @file_size,
+    @id, @password_hash, @original_filename, @display_name, @file_size,
     @created_at, @expires_at, @encryption_salt,
     @wrapped_key, @tier_at_creation, @view_cap, @is_public,
     @last_viewed_at, @kept_after_grace
@@ -246,7 +249,7 @@ const releaseStripeEventStmt = db.prepare(`
   DELETE FROM stripe_events WHERE id = ? AND (processed_at IS NULL OR processed_at = '')
 `);
 const getUserPagesStmt = db.prepare(`
-  SELECT id, original_filename, file_size, slug, created_at, expires_at,
+  SELECT id, original_filename, display_name, file_size, slug, created_at, expires_at,
          view_count, last_viewed_at, view_cap, is_public, tier_at_creation, archived_at,
          wrapped_key, kept_after_grace
     FROM pages WHERE user_id = ? ORDER BY created_at DESC
@@ -271,6 +274,7 @@ const updatePageEncryptionSaltStmt = db.prepare(`UPDATE pages SET encryption_sal
 const updatePageIsPublicStmt = db.prepare(`UPDATE pages SET is_public = ? WHERE id = ?`);
 const updatePageViewCapStmt = db.prepare(`UPDATE pages SET view_cap = ? WHERE id = ?`);
 const updatePageFileSizeStmt = db.prepare(`UPDATE pages SET file_size = ?, original_filename = ? WHERE id = ?`);
+const updatePageDisplayNameStmt = db.prepare(`UPDATE pages SET display_name = ? WHERE id = ?`);
 const setPageKeptStmt = db.prepare(`UPDATE pages SET kept_after_grace = ? WHERE id = ?`);
 const updatePageTierStmt = db.prepare(`UPDATE pages SET tier_at_creation = ? WHERE id = ?`);
 
@@ -293,6 +297,7 @@ const insertPageAtomicFn = db.transaction((page) => {
     id: page.id,
     password_hash: page.password_hash,
     original_filename: page.original_filename,
+    display_name: page.display_name ?? null,
     file_size: page.file_size,
     created_at: page.created_at,
     expires_at: page.expires_at,
@@ -329,6 +334,7 @@ module.exports = {
       last_viewed_at: null,
       kept_after_grace: 0,
       ...page,
+      display_name: page.display_name ?? null,
     });
   },
   getPage(id) {
@@ -438,6 +444,9 @@ module.exports = {
   },
   updatePageFile(pageId, fileSize, originalFilename) {
     return updatePageFileSizeStmt.run(fileSize, originalFilename, pageId);
+  },
+  updatePageDisplayName(pageId, displayName) {
+    return updatePageDisplayNameStmt.run(displayName || null, pageId);
   },
   setPageKeptAfterGrace(pageId, keep) {
     return setPageKeptStmt.run(keep ? 1 : 0, pageId);

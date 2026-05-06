@@ -13,7 +13,7 @@
   <meta name="twitter:title" content="You've been sent a private page">
   <meta name="twitter:description" content="Enter the password to unlock this page on PageGate.">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=phase7-3">
   <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.tagged-events.js"></script>
   <!-- SSR-injected page metadata. Server-side `__PAGE_META__` placeholder
        is replaced with a JSON literal at request time. Used to auto-unlock
@@ -59,7 +59,7 @@
         <p class="pgv-card-foot-line" id="publicLoading">Decrypting…</p>
       </section>
 
-      <!-- Status card: expired / capped / removed / generic error -->
+      <!-- Status card: expired / removed / generic error -->
       <section class="pgv-card hidden" id="statusCard">
         <p class="pgv-eyebrow" id="statusEyebrow">— Closed</p>
         <h1 class="pgv-card-title" id="statusTitle"><em>It’s over</em>.</h1>
@@ -73,13 +73,16 @@
       </section>
     </main>
 
-    <footer class="pgv-footer" id="viewFooter">
-      <p>Hosted on <a href="/">PageGate</a> · <a href="mailto:hi@pagegate.app?subject=Report%20PageGate%20page">Report this page</a></p>
-    </footer>
   </div>
 
   <!-- Sandboxed iframe for rendering unlocked content (no allow-same-origin) -->
   <iframe id="contentFrame" class="content-frame hidden" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer"></iframe>
+
+  <!-- Thin pinned footer that stays visible after the iframe takes over.
+       Hidden for Pro pages via the SSR-injected pageMeta.hideFooter flag. -->
+  <footer class="pgv-host-footer" id="hostFooter">
+    Hosted by <a href="https://pagegate.app/" target="_blank" rel="noopener">pagegate.app</a>
+  </footer>
 
   <script>
     (() => {
@@ -98,7 +101,6 @@
       const statusCopy = document.getElementById('statusCopy');
       const viewShell = document.getElementById('viewShell');
       const contentFrame = document.getElementById('contentFrame');
-      const viewFooter = document.getElementById('viewFooter');
 
       // Read SSR-injected metadata. Falls back to defaults if the server
       // didn't replace the placeholder (e.g. an old cached view.html).
@@ -109,7 +111,7 @@
         if (parsed && typeof parsed === 'object') pageMeta = parsed;
       } catch { /* placeholder was not replaced — keep defaults */ }
 
-      if (pageMeta.hideFooter && viewFooter) viewFooter.style.display = 'none';
+      if (pageMeta.hideFooter) document.body.classList.add('pgv-no-footer');
 
       function showStatus({ eyebrow, title, copy }) {
         promptCard.classList.add('hidden');
@@ -120,7 +122,12 @@
         if (copy)    statusCopy.textContent = copy;
       }
 
-      function renderHtml(html) {
+      function renderHtml(html, opts) {
+        // PR #18 appends a richer Hosted-by footer inside the iframe for
+        // non-Pro pages and signals that with hostFooterInjected. When
+        // present, hide our outer thin strip so we don't render two
+        // stacked footers.
+        if (opts?.hostFooterInjected) document.body.classList.add('pgv-no-footer');
         viewShell.classList.add('hidden');
         contentFrame.classList.remove('hidden');
         contentFrame.srcdoc = html;
@@ -139,13 +146,8 @@
               body: JSON.stringify({}),
             });
             if (res.ok) {
-              renderHtml((await res.json()).html);
-            } else if (res.status === 410) {
-              showStatus({
-                eyebrow: '— View limit reached',
-                title: 'It’s <em>capped</em>.',
-                copy: 'This page hit its view limit. The owner can raise it from their dashboard.',
-              });
+              const data = await res.json();
+              renderHtml(data.html, { hostFooterInjected: data.hostFooterInjected });
             } else if (res.status === 404) {
               showStatus({
                 eyebrow: '— Removed',
@@ -191,7 +193,8 @@
           });
 
           if (res.ok) {
-            renderHtml((await res.json()).html);
+            const data = await res.json();
+            renderHtml(data.html, { hostFooterInjected: data.hostFooterInjected });
           } else if (res.status === 401) {
             errorMsg.textContent = '— Wrong password.';
             errorMsg.classList.remove('hidden');
@@ -208,13 +211,6 @@
               copy: 'This page is no longer available. Expired pages can’t be reopened.',
             });
             if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'expired' } });
-          } else if (res.status === 410) {
-            showStatus({
-              eyebrow: '— View limit reached',
-              title: 'It’s <em>capped</em>.',
-              copy: 'This page hit its view limit. The owner can raise it from their dashboard.',
-            });
-            if (window.plausible) plausible('Unlock Failed', { props: { page: pageId, reason: 'view_cap' } });
           } else if (res.status === 429) {
             errorMsg.textContent = '— Too many attempts. Try again later.';
             errorMsg.classList.remove('hidden');
