@@ -486,11 +486,15 @@ app.post('/api/verify/:pageId', verifyLimiter, async (req, res) => {
 
     // Append the "Hosted by PageGate" shadow-DOM footer for tiers that
     // include it. Pro pages (footerHidden=true) are returned as-is.
+    // The boolean flag is consumed by view.html so it can hide its own
+    // outer "Hosted on" strip when the embedded footer is present, avoiding
+    // a brief period of duplicate footer UI while PR #17 is in flight.
     const tier = page.tier_at_creation || tiers.TIER.ANONYMOUS;
     const tierRule = tiers.RULES[tier];
-    const responseHtml = tierRule?.footerHidden ? html : html + HOST_FOOTER_HTML;
+    const hostFooterInjected = !tierRule?.footerHidden;
+    const responseHtml = hostFooterInjected ? html + HOST_FOOTER_HTML : html;
 
-    res.json({ html: responseHtml });
+    res.json({ html: responseHtml, hostFooterInjected });
   } catch (err) {
     console.error('Verify error:', err);
     res.status(500).json({ error: 'Verification failed' });

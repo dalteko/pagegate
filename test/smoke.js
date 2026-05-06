@@ -199,6 +199,7 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     if (!j.html.includes('<h1>smoke</h1>')) throw new Error('decrypted HTML did not match what we uploaded');
     if (!j.html.includes('id="pg-footer-host"')) throw new Error('non-Pro response should embed the PageGate footer host');
     if (!j.html.includes('Hosted by')) throw new Error('non-Pro response should include "Hosted by" copy');
+    if (j.hostFooterInjected !== true) throw new Error('expected hostFooterInjected: true on non-Pro verify response');
     const row = directDb.prepare('SELECT view_count, last_viewed_at FROM pages WHERE id = ?').get(pageId);
     if (row.view_count !== 1) throw new Error(`expected view_count 1, got ${row.view_count}`);
     if (!row.last_viewed_at) throw new Error('last_viewed_at was not recorded');
@@ -220,6 +221,7 @@ function insertPublicWrappedPage({ id, html, viewCap = null, viewCount = 0 }) {
     assertStatus(r.status, 200, `POST /api/verify/${proId}`);
     const j = await r.json();
     if (j.html.includes('pg-footer-host')) throw new Error('Pro response should not embed the PageGate footer');
+    if (j.hostFooterInjected) throw new Error('Pro response should report hostFooterInjected falsy');
   });
 
   await check('Public pages bypass password-attempt limiter but still unlock', async () => {
