@@ -13,7 +13,7 @@
   <meta name="twitter:title" content="PageGate — Share an HTML page in seconds">
   <meta name="twitter:description" content="Share a private HTML page with an optional password. Account recovery and Pro publishing tools.">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="stylesheet" href="style.css?v=phase7-2">
+  <link rel="stylesheet" href="style.css?v=phase7-3">
   <script defer data-domain="pagegate.app" src="https://plausible.io/js/script.tagged-events.js"></script>
   <script
     data-clerk-publishable-key="__CLERK_PUBLISHABLE_KEY__"
@@ -29,7 +29,6 @@
     <a href="/" class="rb-mark"><span class="dot"></span>PageGate</a>
     <nav class="rb-nav" id="topNav">
       <a href="#pricing">Pricing</a>
-      <a href="/privacy.html">Privacy</a>
       <span class="pro-badge hidden" id="proBadge">Pro</span>
       <a class="btn-pill btn-pill--ghost hidden" id="dashBtn" href="/dashboard">Dashboard</a>
       <button class="btn-pill btn-pill--ghost hidden" id="manageBtn" type="button">Manage billing</button>
@@ -95,6 +94,12 @@
         </section>
 
         <section class="password-section hidden" id="passwordSection">
+          <div class="input-group">
+            <label for="pageNameInput">Page name <span class="label-hint">optional</span></label>
+            <input type="text" id="pageNameInput" maxlength="80" placeholder="Launch page, client preview, moodboard..." autocomplete="off">
+            <p class="field-hint">Shown in your dashboard.</p>
+          </div>
+
           <div class="pro-fields hidden" id="proFields">
             <div class="input-group">
               <label for="slugInput">Custom URL <span class="label-hint">optional</span></label>
@@ -233,6 +238,6 @@
     </div>
   </footer>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=phase7-3"></script>
 </body>
 </html>
